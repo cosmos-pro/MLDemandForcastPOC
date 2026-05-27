@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "aspire",
+      "request": "launch",
+      "name": "Aspire: AppHost",
+      "program": "${workspaceFolder}/CosmosPro.ML.DemandForCast.AppHost/CosmosPro.ML.DemandForCast.AppHost.csproj",
+      "debuggers": {
+        "apphost": {
+          "stopAtEntry": false
+        },
+        "project": {
+          "console": "integratedTerminal",
+          "logging": { "moduleLoad": false }
+        }
+      }
+    }
+  ]
+}

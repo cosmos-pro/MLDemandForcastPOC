@@ -1,0 +1,131 @@
+@page "/dados/{Table}"
+@rendermode InteractiveServer
+@using System.Text.Json
+@using System.Globalization
+@inject StageApiClient StageApi
+@inject NavigationManager Nav
+
+<PageTitle>@(_label ?? Table)</PageTitle>
+
+<RadzenStack Orientation="Orientation.Vertical" Gap="1.5rem">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.75rem">
+        <RadzenButton Icon="arrow_back" Text="Voltar" ButtonStyle="ButtonStyle.Light" Variant="Variant.Flat"
+                      Click="@(() => Nav.NavigateTo("/dados"))" />
+        <RadzenText TextStyle="TextStyle.H4" Style="margin: 0">@(_label ?? Table)</RadzenText>
+        <RadzenBadge Text="@($"{_total:N0} registros")" BadgeStyle="BadgeStyle.Light" IsPill="true" />
+        <HelpTip Position="TooltipPosition.Bottom" Text="Cada página é buscada no servidor sob demanda (paginação server-side). Ordenar uma coluna refaz a consulta ordenada no banco — nada é carregado todo de uma vez." />
+    </RadzenStack>
+
+    <RadzenCard Variant="Variant.Outlined">
+        <RadzenDataGrid @ref="_grid" TItem="Dictionary<string, JsonElement>"
+                        Data="@_rows" Count="@_total" LoadData="@LoadData"
+                        AllowPaging="true" PageSize="25"
+                        AllowSorting="true"
+                        IsLoading="@_loading"
+                        Density="Density.Compact"
+                        PagerHorizontalAlign="HorizontalAlign.Center"
+                        EmptyText="Nenhum registro. Importe (ou gere) uma carga primeiro.">
+            <Columns>
+                @foreach (var col in _columns)
+                {
+                    @* Sem Property: o item é Dictionary e o Radzen tentaria um getter
+                       por reflection (quebra). SortProperty dá a chave de ordenação
+                       server-side; Template faz o render lendo o dicionário. *@
+                    <RadzenDataGridColumn TItem="Dictionary<string, JsonElement>" Title="@col" SortProperty="@col">
+                        <Template Context="row">@FormatCell(row, col)</Template>
+                    </RadzenDataGridColumn>
+                }
+            </Columns>
+        </RadzenDataGrid>
+    </RadzenCard>
+</RadzenStack>
+
+@code {
+    [Parameter] public string Table { get; set; } = "";
+
+    private RadzenDataGrid<Dictionary<string, JsonElement>> _grid = null!;
+    private IReadOnlyList<Dictionary<string, JsonElement>> _rows = [];
+    private string[] _columns = [];
+    private int _total;
+    private bool _loading;
+    private string? _label;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Tabela mudou via navegação — descobre o label e recarrega a 1ª página.
+        try
+        {
+            var tables = await StageApi.ListTablesAsync();
+            _label = tables.FirstOrDefault(t => string.Equals(t.Alias, Table, StringComparison.OrdinalIgnoreCase))?.Label;
+        }
+        catch { _label = null; }
+
+        if (_grid is not null)
+            await _grid.Reload();
+    }
+
+    private async Task LoadData(LoadDataArgs args)
+    {
+        _loading = true;
+        try
+        {
+            // args.OrderBy chega como "Coluna asc" / "Coluna desc" (uma coluna por vez).
+            string? orderBy = null;
+            bool desc = false;
+            if (!string.IsNullOrWhiteSpace(args.OrderBy))
+            {
+                var parts = args.OrderBy.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                orderBy = parts[0];
+                desc = parts.Length > 1 && parts[1].Equals("desc", StringComparison.OrdinalIgnoreCase);
+            }
+
+            var page = await StageApi.BrowseAsync(Table, args.Skip ?? 0, args.Top ?? 25, orderBy, desc);
+            _columns = [.. page.Columns];
+            _rows = page.Rows;
+            _total = (int)Math.Min(page.Total, int.MaxValue);
+        }
+        catch
+        {
+            _rows = [];
+            _total = 0;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string FormatCell(Dictionary<string, JsonElement> row, string col)
+    {
+        if (!row.TryGetValue(col, out var v)) return "";
+        return v.ValueKind switch
+        {
+            JsonValueKind.Null or JsonValueKind.Undefined => "—",
+            JsonValueKind.True => "Sim",
+            JsonValueKind.False => "Não",
+            JsonValueKind.Number => FormatNumber(v),
+            JsonValueKind.String => FormatString(v.GetString()),
+            _ => v.ToString(),
+        };
+    }
+
+    private static string FormatNumber(JsonElement v)
+    {
+        if (v.TryGetInt64(out var l)) return l.ToString("N0", CultureInfo.GetCultureInfo("pt-BR"));
+        if (v.TryGetDecimal(out var d)) return d.ToString("0.##", CultureInfo.GetCultureInfo("pt-BR"));
+        return v.ToString();
+    }
+
+    private static string FormatString(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "—";
+        // Datas ISO vindas do SQL (datetime) → dd/MM/yyyy.
+        if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+        {
+            return dt.TimeOfDay == TimeSpan.Zero
+                ? dt.ToString("dd/MM/yyyy")
+                : dt.ToString("dd/MM/yyyy HH:mm");
+        }
+        return s;
+    }
+}

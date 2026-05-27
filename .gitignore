@@ -1,0 +1,60 @@
+# ---- Build output ----
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Ll]og/
+[Ll]ogs/
+
+# ---- .NET / Visual Studio ----
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.dbmdl
+*.[Cc]ache
+project.lock.json
+project.fragment.lock.json
+artifacts/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# ---- Test / coverage ----
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+coverage*.json
+coverage*.xml
+coverage*.info
+*.coverage
+*.coveragexml
+TestResults/
+
+# ---- User secrets / credenciais (nunca versionar) ----
+secrets.json
+*.pubxml.user
+appsettings.*.local.json
+.env
+.env.*
+
+# ---- Aspire / containers ----
+**/.aspire/
+.dcp/
+
+# ---- Tooling local ----
+.playwright-mcp/
+.idea/
+*.swp
+
+# ---- DACPAC / SQL Server Project intermediate ----
+*.dacpac.zip
+
+# ---- Screenshots de desenvolvimento (raiz) ----
+/*.png

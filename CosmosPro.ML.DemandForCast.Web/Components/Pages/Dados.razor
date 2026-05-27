@@ -1,0 +1,62 @@
+@page "/dados"
+@rendermode InteractiveServer
+@inject StageApiClient StageApi
+@inject NavigationManager Nav
+
+<PageTitle>Dados de treinamento</PageTitle>
+
+<RadzenStack Orientation="Orientation.Vertical" Gap="1.5rem">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+        <RadzenText TextStyle="TextStyle.H4" Style="margin: 0">Dados de treinamento</RadzenText>
+        <HelpTip Position="TooltipPosition.Bottom" Text="Estes são os dados já importados para o banco Stage, que alimentam o engine de previsão. Clique em um card para navegar e inspecionar os registros (paginação no servidor)." />
+    </RadzenStack>
+
+    <RadzenText TextStyle="TextStyle.Body1" Style="margin: 0; color: var(--rz-text-secondary-color)">
+        Escolha o que deseja visualizar:
+    </RadzenText>
+
+    @if (_tables is null)
+    {
+        <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+            <RadzenProgressBarCircular ShowValue="false" Mode="ProgressBarMode.Indeterminate" Size="ProgressBarCircularSize.Small" />
+            <RadzenText TextStyle="TextStyle.Body2">Carregando…</RadzenText>
+        </RadzenStack>
+    }
+    else
+    {
+        <RadzenStack Orientation="Orientation.Horizontal" Gap="1rem" Wrap="FlexWrap.Wrap">
+            @foreach (var t in _tables)
+            {
+                <RadzenCard Variant="Variant.Outlined"
+                            class="data-card"
+                            Style="flex: 1 1 220px; cursor: pointer; transition: box-shadow .15s, transform .15s;"
+                            @onclick="@(() => Open(t.Alias))">
+                    <RadzenStack Orientation="Orientation.Vertical" AlignItems="AlignItems.Center" Gap="0.75rem" Style="padding: 0.5rem 0;">
+                        <RadzenIcon Icon="@t.Icon" Style="font-size: 3rem; color: var(--rz-primary);" />
+                        <RadzenText TextStyle="TextStyle.H6" Style="margin: 0; text-align: center;">@t.Label</RadzenText>
+                        <RadzenButton Text="Visualizar" Icon="arrow_forward" Size="ButtonSize.Small"
+                                      ButtonStyle="ButtonStyle.Light" Click="@(() => Open(t.Alias))" />
+                    </RadzenStack>
+                </RadzenCard>
+            }
+        </RadzenStack>
+    }
+</RadzenStack>
+
+@code {
+    private IReadOnlyList<StageTableSummary>? _tables;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _tables = await StageApi.ListTablesAsync();
+        }
+        catch
+        {
+            _tables = [];
+        }
+    }
+
+    private void Open(string alias) => Nav.NavigateTo($"/dados/{alias}");
+}

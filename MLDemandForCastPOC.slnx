@@ -1,0 +1,26 @@
+<Solution>
+  <Project Path="CosmosPro.ML.DemandForCast.ApiService/CosmosPro.ML.DemandForCast.ApiService.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.AppHost/CosmosPro.ML.DemandForCast.AppHost.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.Database/CosmosPro.ML.DemandForCast.Database.sqlproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.Engine/CosmosPro.ML.DemandForCast.Engine.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.Features/CosmosPro.ML.DemandForCast.Features.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.Forecasting/CosmosPro.ML.DemandForCast.Forecasting.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.OlapSchema/CosmosPro.ML.DemandForCast.OlapSchema.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.ServiceDefaults/CosmosPro.ML.DemandForCast.ServiceDefaults.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.SyntheticData/CosmosPro.ML.DemandForCast.SyntheticData.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.Web/CosmosPro.ML.DemandForCast.Web.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.Worker/CosmosPro.ML.DemandForCast.Worker.csproj" />
+  <Folder Name="/tests/">
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Tests.Shared/CosmosPro.ML.DemandForCast.Tests.Shared.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Engine.Tests/CosmosPro.ML.DemandForCast.Engine.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.OlapSchema.Tests/CosmosPro.ML.DemandForCast.OlapSchema.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.ApiService.Tests/CosmosPro.ML.DemandForCast.ApiService.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Worker.Tests/CosmosPro.ML.DemandForCast.Worker.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Web.Tests/CosmosPro.ML.DemandForCast.Web.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.ApiService.IntegrationTests/CosmosPro.ML.DemandForCast.ApiService.IntegrationTests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Web.E2ETests/CosmosPro.ML.DemandForCast.Web.E2ETests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.SyntheticData.Tests/CosmosPro.ML.DemandForCast.SyntheticData.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Features.Tests/CosmosPro.ML.DemandForCast.Features.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Forecasting.Tests/CosmosPro.ML.DemandForCast.Forecasting.Tests.csproj" />
+  </Folder>
+</Solution>

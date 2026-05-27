@@ -1,0 +1,94 @@
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Playwright;
+
+namespace CosmosPro.ML.DemandForCast.Web.E2ETests;
+
+/// <summary>
+/// Sobe o AppHost real (containers persistentes + apiservice + webfrontend +
+/// worker) e fornece um <c>IBrowser</c> Playwright para os testes E2E. O Aspire
+/// não roteia automaticamente para o webfrontend via service discovery em
+/// browser — usamos o endpoint HTTPS publicado pelo Aspire diretamente.
+/// </summary>
+public sealed class AppHostFixture : IAsyncLifetime
+{
+    public DistributedApplication App { get; private set; } = null!;
+    public IPlaywright Playwright { get; private set; } = null!;
+    public IBrowser Browser { get; private set; } = null!;
+    public string WebfrontendUrl { get; private set; } = null!;
+
+    public async ValueTask InitializeAsync()
+    {
+        var builder = await DistributedApplicationTestingBuilder
+            .CreateAsync<Projects.CosmosPro_ML_DemandForCast_AppHost>();
+
+        builder.Services.AddLogging(l => l.SetMinimumLevel(LogLevel.Warning));
+
+        OverrideSqlProjectWithBuiltDacpac(builder, "stage-schema");
+
+        App = await builder.BuildAsync();
+        await App.StartAsync();
+
+        using var healthyCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        await App.ResourceNotifications.WaitForResourceHealthyAsync("webfrontend", healthyCts.Token);
+
+        WebfrontendUrl = App.GetEndpoint("webfrontend", "https").ToString();
+
+        // Garante navegadores baixados (idempotente — pula se já existem).
+        var exitCode = Microsoft.Playwright.Program.Main(["install", "chromium"]);
+        if (exitCode != 0)
+        {
+            throw new InvalidOperationException($"playwright install retornou {exitCode}");
+        }
+
+        Playwright = await Microsoft.Playwright.Playwright.CreateAsync();
+        Browser = await Playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+        {
+            Headless = true,
+        });
+    }
+
+    private static void OverrideSqlProjectWithBuiltDacpac(IDistributedApplicationTestingBuilder builder, string resourceName)
+    {
+        var resource = builder.Resources.OfType<SqlProjectResource>().Single(r => r.Name == resourceName);
+
+        var testBin = AppContext.BaseDirectory;
+        var repoRoot = Path.GetFullPath(Path.Combine(testBin, "..", "..", "..", "..", ".."));
+        var dacpacPath = Path.Combine(
+            repoRoot,
+            "CosmosPro.ML.DemandForCast.Database",
+            "bin", "Debug", "net10.0",
+            "CosmosPro.ML.DemandForCast.Database.dacpac");
+
+        if (!File.Exists(dacpacPath))
+        {
+            throw new FileNotFoundException(
+                $"DACPAC não encontrado em '{dacpacPath}'. Garanta `dotnet build` do projeto Database antes de rodar testes.",
+                dacpacPath);
+        }
+
+        var projectMetadataAnnotations = resource.Annotations
+            .Where(a => a.GetType().GetInterfaces().Any(i => i.Name == "IProjectMetadata"))
+            .ToList();
+        foreach (var anno in projectMetadataAnnotations)
+        {
+            resource.Annotations.Remove(anno);
+        }
+
+        builder.CreateResourceBuilder(resource).WithDacpac(dacpacPath);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Browser is not null) await Browser.DisposeAsync();
+        Playwright?.Dispose();
+        if (App is not null)
+        {
+            await App.StopAsync();
+            await App.DisposeAsync();
+        }
+    }
+}

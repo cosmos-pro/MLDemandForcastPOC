@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CosmosPro.ML.DemandForCast.Worker</RootNamespace>
+    <UserSecretsId>worker-cosmospro-ml-demand-forecast-poc</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CosmosPro.ML.DemandForCast.ServiceDefaults\CosmosPro.ML.DemandForCast.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\CosmosPro.ML.DemandForCast.Engine\CosmosPro.ML.DemandForCast.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CosmosPro.ML.DemandForCast.Worker.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Microsoft.EntityFrameworkCore.SqlServer" Version="13.3.4" />
+    <PackageReference Include="Aspire.Microsoft.Data.SqlClient" Version="13.3.4" />
+    <PackageReference Include="CommunityToolkit.Aspire.Minio.Client" Version="13.3.0" />
+    <PackageReference Include="CsvHelper" Version="33.1.0" />
+  </ItemGroup>
+
+</Project>

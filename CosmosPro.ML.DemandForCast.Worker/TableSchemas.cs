@@ -1,0 +1,127 @@
+using System.Data;
+
+namespace CosmosPro.ML.DemandForCast.Worker;
+
+/// <summary>
+/// Schema explícito de cada tabela Stage. Necessário porque o `SqlBulkCopy`
+/// não converte strings para tipos numéricos/bit/data automaticamente — temos
+/// que materializar um `DataTable` com colunas já tipadas.
+/// </summary>
+internal static class TableSchemas
+{
+    internal record Column(string Name, Type Type, bool Nullable);
+
+    public static readonly IReadOnlyDictionary<string, Column[]> ByTable = new Dictionary<string, Column[]>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Lojas"] =
+        [
+            new("LojaId", typeof(int), false),
+            new("Nome", typeof(string), false),
+            new("UF", typeof(string), false),
+            new("Cidade", typeof(string), false),
+            new("Regiao", typeof(string), true),
+            new("Perfil", typeof(string), true),
+            new("DiasOperacaoSemana", typeof(byte), false),
+            new("DataAbertura", typeof(DateTime), true),
+            new("Ativo", typeof(bool), false),
+        ],
+        ["Produtos"] =
+        [
+            new("Sku", typeof(string), false),
+            new("Nome", typeof(string), false),
+            new("Categoria", typeof(string), true),
+            new("Subcategoria", typeof(string), true),
+            new("Fabricante", typeof(string), true),
+            new("PrincipioAtivo", typeof(string), true),
+            new("Apresentacao", typeof(string), true),
+            new("Ean", typeof(string), true),
+            new("RegistroAnvisa", typeof(string), true),
+            new("ListaControle", typeof(string), true),
+            new("ClasseTerapeutica", typeof(string), true),
+            new("Ativo", typeof(bool), false),
+        ],
+        ["Vendas"] =
+        [
+            new("Data", typeof(DateTime), false),
+            new("LojaId", typeof(int), false),
+            new("Sku", typeof(string), false),
+            new("Quantidade", typeof(decimal), false),
+            new("PrecoUnitario", typeof(decimal), false),
+            new("ValorTotal", typeof(decimal), false),
+        ],
+        ["EstoquesDiarios"] =
+        [
+            new("Data", typeof(DateTime), false),
+            new("LojaId", typeof(int), false),
+            new("Sku", typeof(string), false),
+            new("QuantidadeEmEstoque", typeof(decimal), false),
+        ],
+        ["Compras"] =
+        [
+            new("DataPedido", typeof(DateTime), false),
+            new("DataRecebimento", typeof(DateTime), true),
+            new("LojaId", typeof(int), false),
+            new("Sku", typeof(string), false),
+            new("Quantidade", typeof(decimal), false),
+            new("Fornecedor", typeof(string), true),
+        ],
+        ["Promocoes"] =
+        [
+            new("DataInicio", typeof(DateTime), false),
+            new("DataFim", typeof(DateTime), false),
+            new("Sku", typeof(string), false),
+            new("LojaId", typeof(int), true),
+            new("Tipo", typeof(string), true),
+            new("DescontoPct", typeof(decimal), true),
+        ],
+        ["MercadoIqvia"] =
+        [
+            new("Mes", typeof(DateTime), false),
+            new("PrincipioAtivo", typeof(string), false),
+            new("UF", typeof(string), false),
+            new("DemandaMercadoUnidades", typeof(decimal), false),
+            new("MarketShareCategoria", typeof(decimal), true),
+        ],
+    };
+
+    public static DataTable BuildEmpty(string table)
+    {
+        var dt = new DataTable(table);
+        foreach (var col in ByTable[table])
+        {
+            var dc = new DataColumn(col.Name, col.Type) { AllowDBNull = col.Nullable };
+            dt.Columns.Add(dc);
+        }
+        return dt;
+    }
+
+    public static object Parse(Column col, string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return col.Nullable
+                ? DBNull.Value
+                : throw new FormatException($"Coluna '{col.Name}' obrigatória recebeu valor vazio.");
+        }
+
+        var s = raw.Trim().Trim('"');
+
+        // 1/0 mapeia para bit; aceita também true/false.
+        if (col.Type == typeof(bool))
+        {
+            if (s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
+            if (s == "0" || s.Equals("false", StringComparison.OrdinalIgnoreCase)) return false;
+            throw new FormatException($"Coluna '{col.Name}' bit recebeu valor inválido '{s}'.");
+        }
+
+        if (col.Type == typeof(int)) return int.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+        if (col.Type == typeof(long)) return long.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+        if (col.Type == typeof(byte)) return byte.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+        if (col.Type == typeof(decimal)) return decimal.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+        if (col.Type == typeof(double)) return double.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+        if (col.Type == typeof(DateTime)) return DateTime.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+        if (col.Type == typeof(string)) return s;
+
+        throw new NotSupportedException($"Tipo {col.Type} não suportado em TableSchemas.Parse.");
+    }
+}

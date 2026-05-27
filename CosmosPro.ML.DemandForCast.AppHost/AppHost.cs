@@ -1,0 +1,103 @@
+var builder = DistributedApplication.CreateBuilder(args);
+
+// --- Parameters (credenciais geradas pelo Aspire, persistidas em user-secrets) -
+
+var minioAccessKey = builder.AddParameter("minio-access-key", secret: false, value: "minioadmin");
+var minioSecretKey = builder.AddParameter("minio-secret-key", secret: true);
+
+// --- Data stores (persistentes entre F5s) ------------------------------------
+
+// DbGate (UI web de inspeção) é compartilhado entre SQL Server e ClickHouse.
+// O volume/lifetime do container DbGate é configurado aqui (na primeira
+// chamada `.WithDbGate`); a chamada subsequente no ClickHouse reusa o mesmo
+// recurso DbGate (AddDbGate é idempotente).
+var sqlServer = builder.AddSqlServer("sql")
+                       .WithLifetime(ContainerLifetime.Persistent)
+                       .WithDataVolume()
+                       .WithDbGate(cfg => cfg.WithDataVolume().WithLifetime(ContainerLifetime.Persistent));
+
+// Stage: staging area dos dados importados via UI (vendas, estoque, compras,
+// promoções, mestres, IQVIA). O engine só lê deste banco; nunca escreve.
+// Schema gerenciado declarativamente via SQL Server Project / DACPAC.
+var stageDb = sqlServer.AddDatabase("Stage");
+
+// engine: metadados próprios do engine (cargas, experimentos, runs, modelos,
+// métricas). Schema será gerenciado via EF Core migrations quando o projeto
+// Engine for criado.
+var engineDb = sqlServer.AddDatabase("engine");
+
+// `.WithDbGate()` aqui é um helper local (ver ClickHouseDbGateExtensions.cs)
+// que cobre a lacuna do Aspire.Hosting.ClickHouse, ainda sem suporte nativo.
+var clickhouse = builder.AddClickHouse("clickhouse")
+                        .WithLifetime(ContainerLifetime.Persistent)
+                        .WithDataVolume()
+                        .WithDbGate();
+
+// vendas-olap: histórico denso de vendas para varredura analítica.
+// Nome do recurso Aspire usa hífen; nome do schema no ClickHouse é "vendas_olap".
+var vendasOlapDb = clickhouse.AddDatabase("vendas-olap", "vendas_olap");
+
+// MinIO: object storage S3-compatible para armazenar ZIPs de import (CSVs
+// de vendas, estoque, etc.). Persistido em volume; chaves geradas como
+// ParameterResource pelo Aspire.
+var minio = builder.AddMinioContainer("minio", minioAccessKey, minioSecretKey)
+                   .WithLifetime(ContainerLifetime.Persistent)
+                   .WithDataVolume();
+
+// --- Schema deployment -------------------------------------------------------
+
+// SQL Server Project compilado em DACPAC e aplicado ao banco "Stage" a cada
+// F5. `WithReference` já registra OnResourceReady internamente — adicionar
+// `WaitFor` redundante prende o recurso em Waiting (descoberto em F1 debug).
+var stageSchema = builder.AddSqlProject<Projects.CosmosPro_ML_DemandForCast_Database>("stage-schema")
+                         .WithReference(stageDb);
+
+// ClickHouse não tem DACPAC. O projeto OlapSchema aplica scripts versionados
+// idempotentes ao banco vendas-olap (controle via tabela __schema_migrations).
+var olapSchema = builder.AddProject<Projects.CosmosPro_ML_DemandForCast_OlapSchema>("vendas-olap-schema")
+                        .WithReference(vendasOlapDb)
+                        .WaitFor(vendasOlapDb)
+                        .WithParentRelationship(vendasOlapDb.Resource);
+
+// --- Services ----------------------------------------------------------------
+
+var apiService = builder.AddProject<Projects.CosmosPro_ML_DemandForCast_ApiService>("apiservice")
+    .WithHttpHealthCheck("/health")
+    .WithReference(stageDb)
+    .WithReference(engineDb)
+    .WithReference(vendasOlapDb)
+    .WithReference(minio)
+    .WaitFor(stageDb)
+    .WaitFor(engineDb)
+    .WaitFor(vendasOlapDb)
+    .WaitFor(minio)
+    .WaitForCompletion(stageSchema)
+    .WaitForCompletion(olapSchema);
+
+// EF Core migrations para o banco "engine" — runner one-shot orquestrado pelo
+// Aspire. Usa o DbContext registrado no apiservice (`AddSqlServerDbContext<EngineDbContext>`).
+// Pacote: Aspire.Hosting.EntityFrameworkCore (prerelease 13.3.4-preview).
+// `RunDatabaseUpdateOnStart` já faz o apiservice esperar implicitamente — não
+// adicionar `WaitForCompletion` em cima (criaria ciclo).
+apiService
+    .AddEFMigrations("engine-migrations", "CosmosPro.ML.DemandForCast.Engine.EngineDbContext")
+    .RunDatabaseUpdateOnStart();
+
+builder.AddProject<Projects.CosmosPro_ML_DemandForCast_Web>("webfrontend")
+    .WithExternalHttpEndpoints()
+    .WithHttpHealthCheck("/health")
+    .WithReference(apiService)
+    .WaitFor(apiService);
+
+// Worker que consome a fila engine.CargasStage e processa os ZIPs do MinIO
+// para o banco Stage (BULK INSERT por tabela em transação única).
+builder.AddProject<Projects.CosmosPro_ML_DemandForCast_Worker>("worker")
+    .WithReference(stageDb)
+    .WithReference(engineDb)
+    .WithReference(minio)
+    .WaitFor(stageDb)
+    .WaitFor(engineDb)
+    .WaitFor(minio)
+    .WaitForCompletion(stageSchema);
+
+builder.Build().Run();

@@ -1,0 +1,148 @@
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Refit;
+
+namespace CosmosPro.ML.DemandForCast.ApiService.IntegrationTests;
+
+/// <summary>
+/// Sobe o AppHost real (com SQL Server, ClickHouse, MinIO, Worker) uma vez
+/// por classe de teste via <c>IClassFixture</c>. Subir leva ~60-90s por causa
+/// dos containers persistentes — não use por método (`IAsyncLifetime` direto).
+/// </summary>
+public sealed class AppHostFixture : IAsyncLifetime
+{
+    public DistributedApplication App { get; private set; } = null!;
+    public IImportsApi ImportsApi { get; private set; } = null!;
+
+    public async ValueTask InitializeAsync()
+    {
+        var builder = await DistributedApplicationTestingBuilder
+            .CreateAsync<Projects.CosmosPro_ML_DemandForCast_AppHost>();
+
+        builder.Services.AddLogging(l => l.SetMinimumLevel(LogLevel.Warning));
+
+        // CommunityToolkit.Aspire.Hosting.SqlDatabaseProjects descobre o
+        // caminho do .dacpac avaliando o .sqlproj via Microsoft.Build em runtime.
+        // Sob `dotnet test`, MSBuild não está corretamente resolvido e a carga
+        // falha com "Microsoft.Common.props not found". Como o build do .sqlproj
+        // já gera o .dacpac no `bin\Debug\net10.0` da pasta do projeto, atalhamos
+        // o resource para apontar direto pro arquivo via `WithDacpac` (que
+        // adiciona uma DacpacMetadataAnnotation e bypassa o MSBuild evaluation).
+        OverrideSqlProjectWithBuiltDacpac(builder, "stage-schema");
+
+        App = await builder.BuildAsync();
+        await App.StartAsync();
+
+        var httpClient = App.CreateHttpClient("apiservice", endpointName: "https");
+        httpClient.Timeout = TimeSpan.FromMinutes(2);
+        ImportsApi = RestService.For<IImportsApi>(httpClient);
+
+        using var healthyCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        try
+        {
+            await App.ResourceNotifications.WaitForResourceHealthyAsync("apiservice", healthyCts.Token);
+        }
+        catch (Exception ex)
+        {
+            var snapshot = await CaptureResourceSnapshotAsync();
+            var failedLogs = await CaptureFailedResourceLogsAsync();
+            throw new InvalidOperationException(
+                $"apiservice não ficou saudável.\n\nEstado dos recursos:\n{snapshot}\n\nLogs:\n{failedLogs}",
+                ex);
+        }
+    }
+
+    private static void OverrideSqlProjectWithBuiltDacpac(IDistributedApplicationTestingBuilder builder, string resourceName)
+    {
+        var resource = builder.Resources.OfType<SqlProjectResource>().Single(r => r.Name == resourceName);
+
+        // bin do test = ...\tests\<TestProj>\bin\Debug\net10.0\
+        // dacpac     = ...\CosmosPro.ML.DemandForCast.Database\bin\Debug\net10.0\CosmosPro.ML.DemandForCast.Database.dacpac
+        var testBin = AppContext.BaseDirectory;
+        var repoRoot = Path.GetFullPath(Path.Combine(testBin, "..", "..", "..", "..", ".."));
+        var dacpacPath = Path.Combine(
+            repoRoot,
+            "CosmosPro.ML.DemandForCast.Database",
+            "bin", "Debug", "net10.0",
+            "CosmosPro.ML.DemandForCast.Database.dacpac");
+
+        if (!File.Exists(dacpacPath))
+        {
+            throw new FileNotFoundException(
+                $"DACPAC não encontrado em '{dacpacPath}'. Garanta `dotnet build` do projeto Database antes de rodar testes.",
+                dacpacPath);
+        }
+
+        // O SqlProjectResource criado por AddSqlProject<TProject> prioriza
+        // IProjectMetadata (que faz ele resolver o .sqlproj via MSBuild). Removemos
+        // essa anotação para forçar uso da DacpacMetadataAnnotation que WithDacpac
+        // adiciona em seguida.
+        var projectMetadataAnnotations = resource.Annotations
+            .Where(a => a.GetType().GetInterfaces().Any(i => i.Name == "IProjectMetadata"))
+            .ToList();
+        foreach (var anno in projectMetadataAnnotations)
+        {
+            resource.Annotations.Remove(anno);
+        }
+
+        builder.CreateResourceBuilder(resource).WithDacpac(dacpacPath);
+    }
+
+    private async Task<string> CaptureResourceSnapshotAsync()
+    {
+        var states = new Dictionary<string, string>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            await foreach (var evt in App.ResourceNotifications.WatchAsync(cts.Token))
+            {
+                states[evt.Resource.Name] = $"{evt.Snapshot.State?.Text ?? "?"} (health: {evt.Snapshot.HealthStatus?.ToString() ?? "?"})";
+            }
+        }
+        catch (OperationCanceledException) { }
+
+        return string.Join("\n", states.Select(kv => $"  - {kv.Key}: {kv.Value}"));
+    }
+
+    private async Task<string> CaptureFailedResourceLogsAsync()
+    {
+        var loggerService = App.Services.GetRequiredService<ResourceLoggerService>();
+        var failed = new[] { "stage-schema", "apiservice", "worker", "engine-migrations" };
+        var output = new List<string>();
+
+        foreach (var name in failed)
+        {
+            output.Add($"--- {name} ---");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            try
+            {
+                await foreach (var batch in loggerService.WatchAsync(name).WithCancellation(cts.Token))
+                {
+                    foreach (var line in batch)
+                    {
+                        output.Add($"  {line.Content}");
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                output.Add($"  (erro lendo logs: {ex.Message})");
+            }
+        }
+
+        return string.Join("\n", output);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (App is not null)
+        {
+            await App.StopAsync();
+            await App.DisposeAsync();
+        }
+    }
+}

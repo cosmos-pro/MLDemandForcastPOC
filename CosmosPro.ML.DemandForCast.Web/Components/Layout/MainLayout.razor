@@ -1,0 +1,28 @@
+@inherits LayoutComponentBase
+
+<RadzenLayout>
+    <RadzenHeader>
+        <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0">
+            <RadzenSidebarToggle Click="@(() => _sidebarExpanded = !_sidebarExpanded)" />
+            <RadzenLabel Text="CosmosPro · Demand Forecast" Style="font-weight: 600; font-size: 1.1rem; margin-left: 0.5rem;" />
+            <div style="flex: 1"></div>
+            <RadzenAppearanceToggle Style="margin-right: 0.5rem" />
+        </RadzenStack>
+    </RadzenHeader>
+
+    <RadzenSidebar @bind-Expanded="@_sidebarExpanded" style="z-index: 2">
+        <NavMenu />
+    </RadzenSidebar>
+
+    <RadzenBody>
+        <div class="rz-p-4">
+            @Body
+        </div>
+    </RadzenBody>
+</RadzenLayout>
+
+<RadzenComponents @rendermode="InteractiveServer" />
+
+@code {
+    private bool _sidebarExpanded = true;
+}

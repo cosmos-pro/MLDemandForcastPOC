@@ -1,0 +1,213 @@
+# CosmosPro.ML.DemandForCast (POC)
+
+POC de um **engine de previsão de demanda** para apoiar o processo de **sugestão de compra** no varejo farmacêutico. Construído sobre .NET 10 + .NET Aspire, com fontes de dados em **SQL Server** e/ou **ClickHouse**.
+
+> Status: **bootstrap**. Solução Aspire em branco com os 4 projetos do template (AppHost, ApiService, ServiceDefaults, Web). Próximos passos abaixo.
+
+> **Contexto:** este repositório é o protótipo de um TCC. A visão completa (objetivo acadêmico, algoritmos comparados, dados, próximos passos) está em **[Docs/tcc-design.md](Docs/tcc-design.md)**.
+
+---
+
+## 1. Objetivo
+
+Prever demanda (em unidades) por **SKU × ponto-de-venda × dia/semana**, com horizonte e granularidade configuráveis, para alimentar uma política de sugestão de compra (lead time + lote econômico + nível de serviço).
+
+Saídas esperadas do engine:
+
+- Previsão pontual (`yhat`)
+- Intervalos de confiança / quantis (para dimensionar *safety stock*)
+- *Backtest* (MAE, MAPE, WAPE, RMSE) por hierarquia (rede → loja → categoria → SKU)
+- Sinalização de séries problemáticas (itens intermitentes, *new items*, vendas anômalas)
+
+---
+
+## 2. Stack de ML — por que **ML.NET**, com ressalvas
+
+Avaliação direta para este caso de uso:
+
+| Aspecto | ML.NET hoje | Implicação no POC |
+|---|---|---|
+| Manutenção | Ativo — repo `dotnet/machinelearning` recebe releases, ML.NET 4.x atual, pacotes `Microsoft.ML.TimeSeries`, `Microsoft.ML.FastTree`, `Microsoft.ML.LightGbm`, `Microsoft.ML.AutoML` em uso. | Aposta segura no curto/médio prazo. |
+| `ForecastBySsa` (SSA — o que o tutorial da MS Learn ensina) | Univariado, sem covariáveis (promoção, preço, feriado, estoque). Foi o *flagship* do tutorial original de 2019. | **Não usar como motor principal.** Bom só como baseline didático ou detector de padrão. |
+| LightGBM / FastTree regressão | Maduros, performance competitiva. Receita "GBM sobre features engenheiradas" é a mesma que venceu o M5 Forecasting Competition (Walmart, Kaggle 2020). | **Esta é a base do POC.** |
+| AutoML Forecasting (`mlContext.Auto().CreateForecastingExperiment`) | Disponível, mas com catálogo de modelos limitado vs. Python (Nixtla, Darts, sktime). | Útil para *quick wins* em séries curtas; não substitui o pipeline customizado. |
+| Itens intermitentes (Croston, TSB, SBA) | **Não há suporte nativo.** | Risco real em farma (medicamentos de baixo giro). Precisa de implementação custom **ou** sidecar Python. |
+| Forecast hierárquico com reconciliação (MinT, OLS) | Sem suporte nativo. | Pode ser implementado manualmente; para o POC, projetar a interface aceitando esse hook. |
+| ONNX export | Suportado. | Permite servir o modelo fora do .NET, se necessário. |
+
+**Conclusão sobre o tutorial que você viu** (`learn.microsoft.com/.../time-series-demand-forecasting`): a impressão de "antigo" é correta — ele ensina **SSA**, que é insuficiente para o nosso caso. Não é que ML.NET esteja morto; é que aquele tutorial específico mostra o caminho fraco. O caminho forte (LightGBM + features) **não tem tutorial oficial elegante**, mas é o que vamos seguir.
+
+### Decisão arquitetural
+
+1. **Engine principal** = ML.NET + LightGBM regressão sobre *feature store* com lags, rolling stats, calendário (incluindo feriados nacionais/estaduais e datas farma-relevantes), promoção, preço, ruptura, hierarquia de produto/loja.
+2. **Abstração `IForecastEngine`** desde o dia 1 — se um segmento do catálogo (ex.: itens intermitentes) exigir Croston/TSB, plugamos um *sidecar* Python (FastAPI + `statsforecast`) orquestrado pelo AppHost Aspire, sem alterar o consumidor.
+3. **SSA / `DetectAnomalyBySrCnn`** = fluxo paralelo de qualidade de dados (flag de vendas anômalas antes de entrar no treino), **não** motor de previsão.
+4. **Sem cloud lock-in no POC.** Tudo roda local via Aspire. Modelos serializados em `.zip` (ML.NET) e/ou ONNX.
+
+---
+
+## 3. Arquitetura
+
+A cada `F5` o AppHost sobe **todos** os recursos lado a lado:
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│ CosmosPro.ML.DemandForCast.AppHost (Aspire 13.3.1)                │
+│                                                                   │
+│  sql (SQL Server 2022 container, persistent volume)               │
+│   ├─ vendas       ← schema deployado via DACPAC (SQL Project)     │
+│   └─ engine       ← schema gerenciado via EF Core migrations (F2) │
+│                                                                   │
+│  clickhouse (ClickHouse server container, persistent volume)      │
+│   └─ vendas-olap  ← histórico denso para varredura analítica      │
+│                                                                   │
+│  dbgate (UI web de inspeção, volume persistente)                  │
+│   ├─ conexão "sql"        ← auto-wire (SqlServer.Extensions)      │
+│   └─ conexão "clickhouse" ← auto-wire (helper local, ver §abaixo) │
+│                                                                   │
+│  vendas-schema (one-shot)                                         │
+│   └─ publica DACPAC do projeto Database no banco "vendas"         │
+│                                                                   │
+│  apiservice  ← .WaitFor(vendas, engine, vendas-olap)              │
+│              ← .WaitForCompletion(vendas-schema)                  │
+│                                                                   │
+│  webfrontend ← .WaitFor(apiservice)                               │
+│                                                                   │
+│  [futuro] forecast-py — sidecar opcional para Croston/TSB         │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+Persistência: `WithLifetime(ContainerLifetime.Persistent)` + `WithDataVolume()` em SQL Server e ClickHouse. Os containers sobrevivem ao encerramento do AppHost; os volumes nomeados sobrevivem à recriação dos containers. Reset completo de dados exige `docker volume rm` explícito.
+
+Projetos da solução (`MLDemandForCastPOC.slnx`):
+
+| Projeto | Papel |
+|---|---|
+| [CosmosPro.ML.DemandForCast.AppHost](CosmosPro.ML.DemandForCast.AppHost/) | Orquestração Aspire. Declara recursos (DBs, serviços) e dependências. |
+| [CosmosPro.ML.DemandForCast.ApiService](CosmosPro.ML.DemandForCast.ApiService/) | HTTP API que expõe treino, forecast e métricas. Hospeda o engine ML.NET. |
+| [CosmosPro.ML.DemandForCast.Web](CosmosPro.ML.DemandForCast.Web/) | Blazor — UI de cockpit: disparar experimentos, inspecionar backtests, comparar modelos. |
+| [CosmosPro.ML.DemandForCast.Database](CosmosPro.ML.DemandForCast.Database/) | SQL Server Project (`MSBuild.Sdk.SqlProj/4.2.0`). Schema declarativo do banco `vendas`, deployado via DACPAC a cada F5. |
+| [CosmosPro.ML.DemandForCast.OlapSchema](CosmosPro.ML.DemandForCast.OlapSchema/) | Console .NET one-shot. Aplica scripts SQL versionados (embedded em `Scripts/*.sql`) ao banco `vendas-olap` no ClickHouse. Controle de versão via tabela `__schema_migrations`. |
+| [CosmosPro.ML.DemandForCast.ServiceDefaults](CosmosPro.ML.DemandForCast.ServiceDefaults/) | OpenTelemetry, health checks, resilience. |
+
+### Por que duas trilhas de migração de schema
+
+- **DACPAC (`Microsoft.Build.Sql` / `MSBuild.Sdk.SqlProj`)** para o banco `vendas` — schema **declarativo**, ideal para representar a fonte transacional consumida pelo engine. SqlPackage faz o diff e aplica ALTERs; ganhamos histórico de schema versionável, refactoring com detecção de rename, e scripts pre/post-deployment. Aplicado pelo Aspire via `AddSqlProject<Projects.X>(...)` (pacote `CommunityToolkit.Aspire.Hosting.SqlDatabaseProjects`).
+- **EF Core migrations** para o banco `engine` — schema **imperativo**, ideal para tabelas próprias do engine (`Experimento`, `BacktestRun`, `ModelArtifactRegistry`). Aplicado pelo Aspire via `AddEFMigrations(...)` + `RunDatabaseUpdateOnStart()` (pacote `Aspire.Hosting.EntityFrameworkCore`, anunciado no changelog 13.3 do Aspire mas ainda não publicado no NuGet — placeholder marcado no `AppHost.cs`).
+- **Runner customizado (.NET console one-shot)** para `vendas-olap` no ClickHouse — ClickHouse não tem DACPAC equivalente. O projeto `CosmosPro.ML.DemandForCast.OlapSchema` carrega scripts `.sql` versionados (embedded em `Scripts/`), mantém tabela `__schema_migrations` no próprio ClickHouse, e skipa scripts já aplicados. Aplicado pelo Aspire como um `AddProject<...>(...)` regular com `WithReference(vendasOlapDb)` — apiservice usa `WaitForCompletion(olapSchema)`. Convenção de nomes: `NNN_descricao.sql` (versão = nome sem extensão). **Detalhes completos: [Docs/olap-schema-migrations.md](Docs/olap-schema-migrations.md)**.
+
+### Projetos previstos (próximas fases)
+
+| Projeto | Papel |
+|---|---|
+| `CosmosPro.ML.DemandForCast.Engine` | Class library. `IForecastEngine`, implementações (LightGBM, baseline naive, sidecar adapter). Treino, predição, persistência de modelo. Hospeda o `EngineDbContext` para EF Core migrations. |
+| `CosmosPro.ML.DemandForCast.Features` | Class library. Feature engineering puro (lags, rolling, calendar, joins). Sem dependência de ML.NET para facilitar teste. |
+| `CosmosPro.ML.DemandForCast.Data` | Class library. Acesso a SQL Server (`Microsoft.Data.SqlClient`) e ClickHouse (`ClickHouse.Client`). Repositórios e DTOs de vendas/estoque/promoção. |
+| `CosmosPro.ML.DemandForCast.Contracts` | Class library. DTOs + interfaces compartilhadas entre API, Engine, Web. |
+| `CosmosPro.ML.DemandForCast.Engine.Tests` | xUnit. Backtest reprodutível, *golden samples*, *property tests* em features. |
+
+---
+
+## 4. Dados
+
+### Fontes
+- **SQL Server** — transacional (mestres de produto/loja, vendas recentes, promoções vigentes, ruptura).
+- **ClickHouse** — analítico (histórico denso de vendas, ideal para varrer milhões de séries SKU×loja).
+
+### Granularidade alvo (a confirmar com o negócio)
+- Diária por SKU × loja para o pipeline.
+- Possibilidade de agregação semanal (operação de compra costuma ser semanal).
+
+### Features iniciais previstas
+- **Tempo:** dia da semana, dia do mês, mês, semana epidemiológica, feriado nacional/estadual, dias até/desde feriado.
+- **Lags:** 1, 7, 14, 28 (e seus *rolling means* / *rolling std*).
+- **Calendário farma:** campanhas (ex.: vacinação, antialérgico em transição climática), datas com efeito conhecido.
+- **Comerciais:** preço, preço relativo à categoria, *flag* de promoção, *flag* de ruptura no passado.
+- **Hierarquia:** categoria, subcategoria, fabricante, princípio ativo (quando aplicável).
+- **Loja:** região, perfil, dias de operação.
+
+### Qualidade de dados
+- Detecção de anomalia via `DetectAnomalyBySrCnn` / `DetectIidChangePoint` em fluxo paralelo, antes do treino.
+- Política para **rupturas** (não tratar zero de ruptura como zero de demanda).
+
+---
+
+## 5. Como rodar
+
+### Pré-requisitos
+- .NET 10 SDK
+- Docker Desktop (para recursos do Aspire — SQL Server, ClickHouse)
+- Aspire workload: `dotnet workload install aspire`
+
+### Executar
+```powershell
+dotnet run --project .\CosmosPro.ML.DemandForCast.AppHost\
+```
+
+Aspire Dashboard abre automaticamente; webfrontend, apiservice e DbGate ficam acessíveis pelos endpoints listados.
+
+### Inspecionar bancos com DbGate
+
+DbGate aparece como recurso `dbgate` no dashboard. Abra o endpoint — **as duas conexões já vêm prontas**:
+
+- **SQL Server (`sql`)** — auto-wirada pelo `WithDbGate()` do `CommunityToolkit.Aspire.Hosting.SqlServer.Extensions`.
+- **ClickHouse (`clickhouse`)** — auto-wirada por um helper local em [ClickHouseDbGateExtensions.cs](CosmosPro.ML.DemandForCast.AppHost/ClickHouseDbGateExtensions.cs), que cobre a lacuna do `Aspire.Hosting.ClickHouse` (que ainda não traz `WithDbGate()` nativamente — candidato a PR upstream em `ClickHouse/ClickHouse.Aspire`).
+
+O DbGate roda com `WithDataVolume() + WithLifetime(Persistent)`, então qualquer favorito/aba salvo na UI sobrevive entre F5s.
+
+---
+
+## 6. Roadmap do POC
+
+- [x] **F0 — Fundação**: README, CLAUDE.md, decisão arquitetural.
+- [x] **F1 — Orquestração**: AppHost sobe SQL Server (persistente) + ClickHouse (persistente) + SQL Project DACPAC a cada F5. Bancos `vendas`, `engine`, `vendas-olap` declarados. Schema bootstrap funcional.
+- [ ] **F2 — Dados & schema**:
+  - [x] **F2.1** — Schema do banco `Stage` (renomeado de `vendas`) no SQL Project: `Lojas`, `Produtos`, `Vendas`, `EstoquesDiarios`, `Compras`, `Promocoes`, `MercadoIqvia` (todos sob `dbo`, plural, com FKs/IXs/CKs; aplicado via DACPAC ~28s, validado via MCP). MinIO adicionado ao AppHost para armazenar ZIPs de import.
+  - [ ] **F2.2** — Templates de planilha + UI de importação no Blazor.
+  - [ ] **F2.3** — Dataset sintético farma para semear.
+  - [x] **F2.4** — Projeto `Engine` (class library) com `EngineDbContext` + entidade `CargaStage` + EF Core migrations aplicadas via `Aspire.Hosting.EntityFrameworkCore.AddEFMigrations` (prerelease 13.3.4-preview). Tabela `engine.CargasStage` validada via MCP.
+  - [x] **F2.5** — API endpoint `POST /api/imports/upload` (valida ZIP estrutural + headers das CSVs, upload MinIO bucket `imports/`, INSERT `CargasStage` com `Status=Pendente`, retorna 202 + Id). GET `/api/imports/{id}` retorna o estado da carga. Validado end-to-end via curl: happy path 202 + erros estruturais 400.
+  - [x] **F2.6** — Blazor UI: `/importar` (form upload ZIP via `<InputFile>`) + `/jobs` (lista com polling 3s). Endpoint `GET /api/imports?take=N` adicionado para alimentar a listagem.
+  - [x] **F2.7** — Worker (`CosmosPro.ML.DemandForCast.Worker`, BackgroundService). Claim com `;WITH cte AS (... WITH (UPDLOCK, READPAST) ...) UPDATE cte SET Status='Processando' OUTPUT INSERTED.*`. Download ZIP do MinIO + extract → DataTable tipada via `TableSchemas` → `DELETE FROM` (ordem reversa de FK) + `SqlBulkCopy` (ordem de FK) tudo em transação única. UPDATE final via EF Core `ExecuteUpdateAsync`. Validado end-to-end: ZIP com 18 linhas → Status=Concluida + LinhasImportadas=18 + tabelas Stage com contagem exata.
+- [x] **F3 — Testes** (vai antes do resto pra evitar regressão silenciosa):
+  - [x] **F3.1** — `tests/Tests.Shared` com Bogus fakers (um arquivo por entidade — `LojaFaker`, `ProdutoFaker`, `VendaFaker`, `EstoqueDiarioFaker`, `CompraFaker`, `PromocaoFaker`, `MercadoIqviaFaker`) + `CsvZipBuilder` (gera ZIP em memória com 7 CSVs).
+  - [x] **F3.2** — Unit tests por projeto: `Engine.Tests` (4), `OlapSchema.Tests` (5), `ApiService.Tests` (4), `Worker.Tests` (16), `Web.Tests` (9) — xUnit v3 + FluentAssertions + NSubstitute. 38/38 verdes.
+  - [x] **F3.3** — `ApiService.IntegrationTests` — Aspire.Hosting.Testing 13.3.4 + Refit 10.1.6 no Act. 3 cenários (upload happy path 202 + listagem, ZIP incompleto 400, GET inexistente 404). Workaround obrigatório no fixture para `SqlProjectResource` (remover anotação `IProjectMetadata` + chamar `WithDacpac(absolutePath)` apontando para o DACPAC buildado), porque o evaluation MSBuild falha sob `dotnet test`. 3/3 verdes.
+  - [x] **F3.4** — `Web.E2ETests` — Aspire.Hosting.Testing + Playwright 1.59 no Act. Cenário: navegar para `/importar`, subir ZIP gerado por fakers, ver alerta verde, navegar para `/jobs`, confirmar linha. Localiza linha por filename (não por GUID prefix — UUIDv7 compartilha 8 chars iniciais entre cargas próximas no tempo). 1/1 verde.
+- [x] **F4 — Dataset sintético farma** (era F2.3): novo projeto `CosmosPro.ML.DemandForCast.SyntheticData` (class library) com gerador procedural. Regras de domínio:
+  - **ABC**: power-law (alpha=1.2) sobre baseline por rank; top 20% SKUs respondem por ~80% do volume.
+  - **Sazonalidade semanal**: sáb ×1.5, dom ×0.6, dias úteis ×1.0.
+  - **Sazonalidade anual**: senoidal com pico no inverno (julho ~ dia 200), amplitude ±15%.
+  - **Promoções**: ~5% SKUs com janela 7-14 dias, multiplier 2-3×, desconto 10-30%.
+  - **Ruptura**: probabilidade base 3% dia-SKU-loja; cauda rupturada 2.5× mais que top sellers.
+  - **IQVIA**: agrega por (Mês × PrincipioAtivo × UF), 5k-50k unidades + share 5-25%.
+  - **Ruído Poisson** sobre lambda baseline × fatores; aproximação Normal pra lambda > 30.
+  - **Determinismo**: mesmo seed → mesmo dataset (validado por teste).
+  - **Endpoint** `POST /api/imports/synthetic` no ApiService gera ZIP em memória → MinIO → CargaStage Pendente (passa pelo Worker como upload normal). Botão "Gerar dados sintéticos" na UI Radzen abre dialog com params (lojas, SKUs, datas, seed).
+  - **Testes**: 7 unit tests em `SyntheticData.Tests` (ZIP estrutura, headers, determinismo, ABC concentração, fração de promoções, stats).
+- [x] **F5 — Features**: projeto `CosmosPro.ML.DemandForCast.Features` (class library pura, sem deps externas). Decisões: **granularidade diária**, **horizonte/lead time 7 dias**, **ruptura mascarada do treino**.
+  - `DailyObservation` (input, série densa diária por SKU×loja) → `FeatureVector` (output: features + target + `IsValidTarget`).
+  - **Anti-leakage rígido**: nenhuma feature de histórico usa dados mais recentes que D − LeadTime (7d). Validado por teste (pico dentro do lead time não vaza para lag/rolling/max).
+  - **Lags** 7/14/21/28; **rolling** (mean 7/28, std 28, max 28) com janela terminando em D−7.
+  - **Calendário** do dia-alvo: dia-da-semana, dia-do-mês, mês, fim-de-semana, **feriado nacional BR** (`BrazilianHolidays`, fixos + móveis via Computus/Páscoa).
+  - **Promoção/preço** planejados de D (conhecidos): flag promo, dias-desde-última-promo, preço, preço relativo à média.
+  - **Hierarquia** categórica: SKU, categoria, princípio ativo, classe ABC, loja, UF, região, perfil.
+  - **Densifica gaps** (dias sem venda → qtd 0) para lags corretos; exige histórico ≥ max(maiorLag, LeadTime+rollingLongo−1) = 34 dias.
+  - **Masking de ruptura**: dia com estoque 0 → `IsValidTarget=false` (CLAUDE.md §6), excluído do treino mas mantido como contexto histórico.
+  - **Testes**: 10 unit tests em `Features.Tests` (correção de lag, anti-leakage, rolling, masking, densificação, calendário/feriado, agrupamento por SKU×loja, validação de config).
+  - **Fonte dos dados**: F5 opera sobre observações em memória (puro/determinístico). O loader Stage→observações (densificação a partir de Vendas×EstoquesDiarios×Promocoes) fica acoplado em F6.
+- [ ] **F6 — Engine de previsão v1**: previsores de **demanda** (`IForecastEngine`) + walk-forward + persistência. **Nota:** eMax/eSeg saíram daqui — são política de reposição (estoque máx/segurança), não previsão; foram para **F8**. O comparativo do TCC é: regra clássica eMax/eSeg vs compra derivada do forecast ML.
+  - [x] **F6.1** — Projeto `CosmosPro.ML.DemandForCast.Forecasting` (lib pura, ref. Features). `IForecastEngine`/`IForecastModel`; baselines **naïve sazonal** (previsão = Lag7) e **média móvel** (RollMean7/28); métricas **MAE/MAPE/WAPE/RMSE** (`ForecastMetrics`); **backtest walk-forward** (`WalkForwardBacktest`, origem rolante + janela de treino expansível) com métricas globais e por hierarquia (categoria, ABC, loja, UF); ruptura excluída de treino/avaliação. 13 unit tests (inclui anti-leakage: treino nunca alcança a janela de teste).
+  - [ ] **F6.2** — Engine **LightGBM** (ML.NET) sobre `FeatureVector`; modelo global (SKU como feature); persistência ML.NET (.zip).
+  - [ ] **F6.3** — Loader Stage→`DailyObservation` (Vendas×EstoquesDiarios×Promoções+masters, densificação) + **job de treino no Worker** (fila no banco engine, status/métricas) + UI de resultados (ativa o botão "Treinar").
+- [ ] **F7 — Backtest**: comparação consolidada walk-forward (naïve vs média móvel vs LightGBM) com MAE/MAPE/WAPE/RMSE por hierarquia. Dashboard no Web.
+- [ ] **F8 — Sugestão de compra**: **eMax/eSeg** (política clássica de estoque máximo/segurança) vs ROP derivado do forecast ML (demanda média no LT + safety stock por quantil). É o comparativo central do TCC.
+- [ ] **F9 — Decisão go/no-go**: avaliar qualidade do baseline LightGBM. Decidir se entra sidecar Python para intermitentes.
+
+---
+
+## 7. Referências consultadas
+
+- Documentação atual ML.NET (`/dotnet/machinelearning`) via Context7 — confirma SSA, FastTree, LightGBM e AutoML mantidos.
+- Repositório `dotnet/machinelearning` (ativo).
+- M5 Forecasting Competition (Walmart / Kaggle) — referência da abordagem GBM + features para retail.

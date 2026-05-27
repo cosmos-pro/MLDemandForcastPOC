@@ -1,0 +1,124 @@
+@* Dialog para configurar e disparar geração de dataset sintético farma.
+   Chamado via DialogService.OpenAsync<SyntheticDatasetDialog>("Título", params). *@
+@inject ImportsApiClient ImportsApi
+@inject DialogService DialogService
+@inject NotificationService Notifications
+
+<RadzenStack Orientation="Orientation.Vertical" Gap="1rem" Style="min-width: 380px">
+    <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0">
+        Gera um dataset sintético farma realista (ABC, sazonalidade, promoções, ruptura, IQVIA)
+        e enfileira como uma carga normal. Worker processa após geração.
+    </RadzenText>
+
+    <RadzenStack Orientation="Orientation.Horizontal" Gap="1rem">
+        <div style="flex: 1">
+            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.25rem">
+                <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0">Lojas</RadzenText>
+                <HelpTip Text="Quantas filiais gerar (1-200). Cada loja recebe UF, região e perfil. Mais lojas = mais volume de dados." Size="0.85rem" />
+            </RadzenStack>
+            <RadzenNumeric @bind-Value="_numLojas" Min="1" Max="200" Style="width: 100%" />
+        </div>
+        <div style="flex: 1">
+            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.25rem">
+                <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0">SKUs</RadzenText>
+                <HelpTip Text="Quantos produtos distintos gerar (1-5000). Seguem curva ABC: ~20% dos SKUs concentram ~80% das vendas." Size="0.85rem" />
+            </RadzenStack>
+            <RadzenNumeric @bind-Value="_numSkus" Min="1" Max="5000" Style="width: 100%" />
+        </div>
+    </RadzenStack>
+
+    <RadzenStack Orientation="Orientation.Horizontal" Gap="1rem">
+        <div style="flex: 1">
+            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.25rem">
+                <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0">Início</RadzenText>
+                <HelpTip Text="Primeiro dia do histórico de vendas gerado. O período define a sazonalidade capturada." Size="0.85rem" />
+            </RadzenStack>
+            <RadzenDatePicker @bind-Value="_dataInicio" DateFormat="dd/MM/yyyy" Style="width: 100%" />
+        </div>
+        <div style="flex: 1">
+            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.25rem">
+                <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0">Fim</RadzenText>
+                <HelpTip Text="Último dia do histórico. Recomendado ≥ 12 meses para o modelo aprender padrão semanal e anual." Size="0.85rem" />
+            </RadzenStack>
+            <RadzenDatePicker @bind-Value="_dataFim" DateFormat="dd/MM/yyyy" Style="width: 100%" />
+        </div>
+    </RadzenStack>
+
+    <div>
+        <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.25rem">
+            <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0">Seed</RadzenText>
+            <HelpTip Text="Semente do gerador aleatório. O mesmo seed produz exatamente o mesmo dataset — útil para reproduzir experimentos e comparar modelos de forma justa." Size="0.85rem" />
+        </RadzenStack>
+        <RadzenNumeric @bind-Value="_seed" Style="width: 100%" />
+    </div>
+
+    <RadzenStack Orientation="Orientation.Horizontal" JustifyContent="JustifyContent.End" Gap="0.5rem">
+        <RadzenButton Click="@Cancel" Text="Cancelar" Variant="Variant.Text" Disabled="@_running" />
+        <RadzenButton Click="@Submit" Text="@(_running ? "Gerando…" : "Gerar")"
+                      Icon="@(_running ? "hourglass_empty" : "auto_awesome")"
+                      ButtonStyle="ButtonStyle.Primary"
+                      Disabled="@_running" />
+    </RadzenStack>
+</RadzenStack>
+
+@code {
+    private int _numLojas = 20;
+    private int _numSkus = 500;
+    private DateTime? _dataInicio = new DateTime(2025, 1, 1);
+    private DateTime? _dataFim = new DateTime(2025, 12, 31);
+    private int _seed = 42;
+    private bool _running;
+
+    private async Task Submit()
+    {
+        if (_dataInicio is null || _dataFim is null) return;
+        _running = true;
+        try
+        {
+            var req = new SyntheticRequest(
+                _numLojas, _numSkus,
+                DateOnly.FromDateTime(_dataInicio.Value),
+                DateOnly.FromDateTime(_dataFim.Value),
+                _seed);
+
+            var result = await ImportsApi.GenerateSyntheticAsync(req);
+            if (result.Success)
+            {
+                Notifications.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Success,
+                    Summary = "Geração enfileirada",
+                    Detail = $"Id: {result.Body!.Id.ToString()[..8]}… · Worker vai processar.",
+                    Duration = 5000,
+                });
+                DialogService.Close(true);
+            }
+            else
+            {
+                Notifications.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Error,
+                    Summary = "Falha na geração",
+                    Detail = string.Join(" · ", result.Errors ?? []),
+                    Duration = 8000,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Notifications.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Erro inesperado",
+                Detail = ex.Message,
+                Duration = 8000,
+            });
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private void Cancel() => DialogService.Close(false);
+}

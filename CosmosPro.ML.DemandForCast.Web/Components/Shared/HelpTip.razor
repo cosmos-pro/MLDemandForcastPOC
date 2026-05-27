@@ -1,0 +1,28 @@
+@* Balão de ajuda: ícone "?" que mostra um tooltip Radzen ao passar o mouse.
+   Uso: <HelpTip Text="Explicação aqui" />. TooltipService já registrado por
+   AddRadzenComponents() + <RadzenComponents /> no MainLayout. *@
+@inject TooltipService TooltipService
+
+<span @ref="_ref"
+      @onmouseenter="Show"
+      class="help-tip"
+      style="cursor: help; display: inline-flex; align-items: center; vertical-align: middle;">
+    <RadzenIcon Icon="help_outline"
+                Style="@($"font-size: {Size}; color: var(--rz-text-tertiary-color);")" />
+</span>
+
+@code {
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+    [Parameter] public TooltipPosition Position { get; set; } = TooltipPosition.Top;
+    [Parameter] public string Size { get; set; } = "1rem";
+
+    private ElementReference _ref;
+
+    private void Show() =>
+        TooltipService.Open(_ref, Text, new TooltipOptions
+        {
+            Position = Position,
+            Duration = 6000,
+            Style = "max-width: 320px;",
+        });
+}

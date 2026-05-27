@@ -1,0 +1,53 @@
+@page "/treinamento"
+@rendermode InteractiveServer
+
+<PageTitle>Treinamento</PageTitle>
+
+<RadzenStack Orientation="Orientation.Vertical" Gap="1.5rem">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+        <RadzenText TextStyle="TextStyle.H4" Style="margin: 0">Treinamento do modelo</RadzenText>
+        <HelpTip Position="TooltipPosition.Bottom" Text="Aqui você vai disparar o treino do engine de previsão de demanda (LightGBM) sobre as features extraídas dos dados do Stage, com avaliação walk-forward. Em construção (fase F6)." />
+    </RadzenStack>
+
+    <RadzenCard Variant="Variant.Outlined">
+        <RadzenStack Orientation="Orientation.Vertical" Gap="1rem">
+            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+                <RadzenIcon Icon="construction" Style="color: var(--rz-warning);" />
+                <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Em construção — fase F6</RadzenText>
+            </RadzenStack>
+
+            <RadzenText TextStyle="TextStyle.Body1" Style="margin: 0;">
+                O motor de previsão ainda não está implementado. Quando estiver, esta tela vai permitir:
+            </RadzenText>
+
+            <RadzenStack Orientation="Orientation.Vertical" Gap="0.5rem" Style="padding-left: 0.5rem;">
+                @foreach (var (icon, texto) in _passos)
+                {
+                    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+                        <RadzenIcon Icon="@icon" Style="color: var(--rz-text-secondary-color); font-size: 1.1rem;" />
+                        <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0;">@texto</RadzenText>
+                    </RadzenStack>
+                }
+            </RadzenStack>
+
+            <div>
+                <RadzenButton Text="Treinar modelo" Icon="model_training" ButtonStyle="ButtonStyle.Primary"
+                              Disabled="true" />
+                <RadzenText TextStyle="TextStyle.Caption" Style="margin: 0.5rem 0 0; color: var(--rz-text-tertiary-color);">
+                    Disponível após a implementação do engine (F6).
+                </RadzenText>
+            </div>
+        </RadzenStack>
+    </RadzenCard>
+</RadzenStack>
+
+@code {
+    private static readonly (string Icon, string Texto)[] _passos =
+    [
+        ("dataset", "Selecionar a base de treino (dados já carregados no Stage)."),
+        ("tune", "Configurar horizonte (7 dias), lead time e janelas de feature."),
+        ("model_training", "Treinar LightGBM (modelo global, SKU como feature) e baselines (naïve sazonal, eMax/eSeg)."),
+        ("analytics", "Avaliar com walk-forward: MAE, MAPE, WAPE, RMSE por hierarquia."),
+        ("save", "Persistir o modelo e comparar versões."),
+    ];
+}

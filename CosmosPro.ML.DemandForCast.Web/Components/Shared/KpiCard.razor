@@ -1,0 +1,25 @@
+@* Card KPI no estilo do dashboard Radzen: ícone à esquerda, label pequeno em cima, número grande. *@
+
+<RadzenCard Variant="Variant.Outlined" Style="height: 100%">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.75rem">
+        <RadzenIcon Icon="@Icon" Style="@($"font-size: 2rem; color: {Color}")" />
+        <RadzenStack Orientation="Orientation.Vertical" Gap="0">
+            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.25rem">
+                <RadzenText TextStyle="TextStyle.Overline" Style="@($"margin: 0; color: {Color}")">@Label</RadzenText>
+                @if (!string.IsNullOrEmpty(Help))
+                {
+                    <HelpTip Text="@Help" Size="0.9rem" />
+                }
+            </RadzenStack>
+            <RadzenText TextStyle="TextStyle.H4" Style="margin: 0">@Value</RadzenText>
+        </RadzenStack>
+    </RadzenStack>
+</RadzenCard>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public int Value { get; set; }
+    [Parameter, EditorRequired] public string Icon { get; set; } = "";
+    [Parameter] public string Color { get; set; } = "var(--rz-primary)";
+    [Parameter] public string? Help { get; set; }
+}

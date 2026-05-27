@@ -1,0 +1,30 @@
+{
+  // VS Code mostra essas extensions ao abrir o repo pela primeira vez.
+  // Mantenha enxuto: só o que é estritamente útil para este POC.
+  "recommendations": [
+    // Aspire para VS Code — registra o type "aspire" no launch.json e
+    // orquestra build + debug do AppHost com F5.
+    "microsoft-aspire.aspire-vscode",
+
+    // C# Dev Kit (solution explorer, test runner, refactorings). Dependência
+    // do Aspire extension.
+    "ms-dotnettools.csdevkit",
+
+    // Base C# language server (OmniSharp/Roslyn). Vem como dependência do
+    // Dev Kit, mas listar explícito facilita instalação isolada.
+    "ms-dotnettools.csharp",
+
+    // SQL Database Projects — autoria do .sqlproj (CosmosPro.ML.DemandForCast.Database).
+    // Sem ela, abrir o sqlproj no VS Code dá só syntax highlighting raso.
+    "ms-mssql.sql-database-projects-vscode",
+
+    // MSSQL — conectar e rodar queries ad-hoc no SQL Server com intellisense,
+    // complementar ao DbGate (que é melhor para navegação, mas pior para
+    // escrever T-SQL longo).
+    "ms-mssql.mssql",
+
+    // Container Tools (sucessor do Docker extension) — inspecionar e controlar
+    // os containers que o Aspire sobe (sql, clickhouse, dbgate).
+    "ms-azuretools.vscode-containers"
+  ]
+}

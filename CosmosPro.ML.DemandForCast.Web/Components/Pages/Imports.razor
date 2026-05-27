@@ -1,0 +1,269 @@
+@page "/"
+@rendermode InteractiveServer
+@inject ImportsApiClient ImportsApi
+@inject NotificationService Notifications
+@inject DialogService Dialogs
+@inject TooltipService TooltipService
+@implements IDisposable
+
+<PageTitle>Importação de dados</PageTitle>
+
+<RadzenStack Orientation="Orientation.Vertical" Gap="1.5rem">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+        <RadzenText TextStyle="TextStyle.H4" Style="margin: 0">Importação para Stage</RadzenText>
+        <HelpTip Position="TooltipPosition.Bottom" Text="Cada carga é um arquivo .zip com 7 CSVs (lojas, produtos, vendas, estoques diários, compras, promoções e mercado IQVIA) que o Worker importa para o banco Stage. O engine de previsão só lê do Stage — nunca escreve." />
+        <div style="flex: 1"></div>
+        <InputFile id="hidden-zip-input" OnChange="OnFileSelected" accept=".zip" style="display: none" disabled="@_uploading" />
+        <RadzenButton Click="@OpenSyntheticDialog"
+                      Icon="auto_awesome"
+                      Text="Gerar dados sintéticos"
+                      ButtonStyle="ButtonStyle.Secondary"
+                      Variant="Variant.Outlined"
+                      Disabled="@_uploading"
+                      MouseEnter="@(a => ShowTip(a, "Gera um dataset farma fictício (curva ABC, sazonalidade, promoções, ruptura e IQVIA simulada) e o enfileira como uma carga normal. Útil pra testar o pipeline sem dados reais."))" />
+        <RadzenButton Click="@TriggerFilePicker"
+                      Icon="@(_uploading ? "hourglass_empty" : "cloud_upload")"
+                      Text="@(_uploading ? "Enviando…" : "Importar")"
+                      ButtonStyle="ButtonStyle.Primary"
+                      Disabled="@_uploading"
+                      data-test="import-button"
+                      MouseEnter="@(a => ShowTip(a, "Sobe um arquivo .zip do seu computador contendo os 7 CSVs esperados. O arquivo é validado (estrutura + cabeçalhos) antes de ser enfileirado."))" />
+        <RadzenButton Click="@RefreshAsync" Icon="refresh" Variant="Variant.Text" Disabled="@_loading"
+                      MouseEnter="@(a => ShowTip(a, "Atualiza a lista agora. A tabela também atualiza sozinha a cada 3 segundos."))" />
+    </RadzenStack>
+
+    <RadzenStack Orientation="Orientation.Horizontal" Gap="1rem" Wrap="FlexWrap.Wrap">
+        <div style="flex: 1 1 200px"><KpiCard Label="Total" Value="@_jobs.Count" Icon="inventory" Color="#666"
+            Help="Total de cargas exibidas (as 50 mais recentes)." /></div>
+        <div style="flex: 1 1 200px"><KpiCard Label="Pendentes" Value="@_kpis[Status.Pendente]" Icon="schedule" Color="#9e9e9e"
+            Help="Cargas enfileiradas aguardando o Worker pegar para processar." /></div>
+        <div style="flex: 1 1 200px"><KpiCard Label="Processando" Value="@_kpis[Status.Processando]" Icon="autorenew" Color="#0288d1"
+            Help="Worker está importando o ZIP agora: lê os CSVs, valida e carrega no banco Stage." /></div>
+        <div style="flex: 1 1 200px"><KpiCard Label="Concluídas" Value="@_kpis[Status.Concluida]" Icon="check_circle" Color="#2e7d32"
+            Help="Importação finalizada com sucesso. As linhas já estão disponíveis no Stage para o engine." /></div>
+        <div style="flex: 1 1 200px"><KpiCard Label="Falhas" Value="@_kpis[Status.Falha]" Icon="error" Color="#c62828"
+            Help="A importação falhou. Veja a coluna 'Erro' na tabela para o motivo (ex: CSV malformado, violação de chave)." /></div>
+    </RadzenStack>
+
+    <RadzenCard Variant="Variant.Outlined">
+        <RadzenStack Orientation="Orientation.Vertical" Gap="1rem">
+            <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Cargas recentes</RadzenText>
+            <RadzenDataGrid TItem="CargaStageView"
+                            Data="@_jobs"
+                            AllowPaging="true"
+                            PageSize="10"
+                            AllowSorting="true"
+                            Density="Density.Compact"
+                            EmptyText="Nenhuma carga registrada ainda."
+                            IsLoading="@(_loading && _jobs.Count == 0)">
+                <Columns>
+                    <RadzenDataGridColumn TItem="CargaStageView" Property="Id" Title="Id" Width="130px">
+                        <HeaderTemplate>
+                            <span>Id</span>
+                            <HelpTip Text="Identificador único da carga (UUIDv7). Exibimos só os 8 primeiros caracteres; o id completo aparece na URL e nos logs." Size="0.85rem" />
+                        </HeaderTemplate>
+                        <Template Context="c">
+                            <code style="font-size: 0.8rem">@c.Id.ToString()[..8]…</code>
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CargaStageView" Property="Status" Title="Status" Width="150px">
+                        <HeaderTemplate>
+                            <span>Status</span>
+                            <HelpTip Text="Pendente → Processando → Concluída (ou Falha). O Worker avança esse estado conforme processa a carga." Size="0.85rem" />
+                        </HeaderTemplate>
+                        <Template Context="c">
+                            <RadzenBadge Text="@c.Status" BadgeStyle="@BadgeStyleFor(c.Status)" Shade="Shade.Lighter" />
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CargaStageView" Property="NomeArquivoOriginal" Title="Arquivo" />
+                    <RadzenDataGridColumn TItem="CargaStageView" Property="DataAgendamento" Title="Agendado" Width="180px">
+                        <Template Context="c">
+                            <small>@c.DataAgendamento.ToLocalTime().ToString("dd/MM HH:mm:ss")</small>
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CargaStageView" Property="DataConclusao" Title="Concluído" Width="120px">
+                        <Template Context="c">
+                            <small>@(c.DataConclusao?.ToLocalTime().ToString("HH:mm:ss") ?? "—")</small>
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CargaStageView" Property="LinhasImportadas" Title="Linhas" Width="110px" TextAlign="TextAlign.Right">
+                        <HeaderTemplate>
+                            <span>Linhas</span>
+                            <HelpTip Text="Total de linhas gravadas no Stage somando os 7 CSVs. Preenchido quando a carga conclui." Size="0.85rem" Position="TooltipPosition.Left" />
+                        </HeaderTemplate>
+                        <Template Context="c">
+                            @(c.LinhasImportadas?.ToString("N0") ?? "—")
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CargaStageView" Property="MensagemErro" Title="Erro">
+                        <HeaderTemplate>
+                            <span>Erro</span>
+                            <HelpTip Text="Mensagem de falha quando o status é Falha. Vazio em cargas bem-sucedidas." Size="0.85rem" Position="TooltipPosition.Left" />
+                        </HeaderTemplate>
+                        <Template Context="c">
+                            <small style="color: #c62828">@c.MensagemErro</small>
+                        </Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
+        </RadzenStack>
+    </RadzenCard>
+</RadzenStack>
+
+@code {
+    private const long MaxBytes = 500L * 1024 * 1024;
+
+    private static class Status
+    {
+        public const string Pendente = "Pendente";
+        public const string Processando = "Processando";
+        public const string Concluida = "Concluida";
+        public const string Falha = "Falha";
+    }
+
+    private List<CargaStageView> _jobs = [];
+    private readonly Dictionary<string, int> _kpis = new()
+    {
+        [Status.Pendente] = 0,
+        [Status.Processando] = 0,
+        [Status.Concluida] = 0,
+        [Status.Falha] = 0,
+    };
+    private bool _loading;
+    private bool _uploading;
+    private Timer? _timer;
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _timer = new Timer(async _ => await InvokeAsync(RefreshAsync), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_loading) return;
+        _loading = true;
+        try
+        {
+            var list = await ImportsApi.ListAsync(50, _cts.Token);
+            _jobs = [.. list];
+            RecomputeKpis();
+            StateHasChanged();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception)
+        {
+            // POC: silencia para não quebrar polling.
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void RecomputeKpis()
+    {
+        foreach (var key in _kpis.Keys.ToList()) _kpis[key] = 0;
+        foreach (var j in _jobs)
+        {
+            if (_kpis.ContainsKey(j.Status)) _kpis[j.Status]++;
+        }
+    }
+
+    [Inject] private IJSRuntime JS { get; set; } = null!;
+
+    private void ShowTip(ElementReference element, string text) =>
+        TooltipService.Open(element, text, new TooltipOptions
+        {
+            Position = TooltipPosition.Bottom,
+            Duration = 6000,
+            Style = "max-width: 320px;",
+        });
+
+    private async Task OpenSyntheticDialog()
+    {
+        var result = await Dialogs.OpenAsync<SyntheticDatasetDialog>("Gerar dados sintéticos farma");
+        // Se gerou, refresh imediato pra mostrar a nova carga na lista (antes do polling 3s).
+        if (result is true) await RefreshAsync();
+    }
+
+    private async Task TriggerFilePicker()
+    {
+        // O <InputFile> está escondido (display:none); JS interop dispara o
+        // file picker nativo do navegador a partir do clique no botão Radzen.
+        // Função helper definida em wwwroot/app.js — InvokeVoidAsync exige um
+        // identifier (path) global, não uma expressão.
+        await JS.InvokeVoidAsync("clickElementById", "hidden-zip-input");
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        // InputFileChangeEventArgs.File joga exception se FileCount != 1 — verificar
+        // antes de acessar protege contra cancelamento do file chooser.
+        if (e.FileCount == 0) return;
+        var file = e.File;
+        if (file is null) return;
+
+        _uploading = true;
+        StateHasChanged();
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxBytes);
+            var result = await ImportsApi.UploadAsync(stream, file.Name, file.Size, _cts.Token);
+
+            if (result.Success)
+            {
+                Notifications.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Success,
+                    Summary = "Carga enfileirada",
+                    Detail = $"Id: {result.Body!.Id.ToString()[..8]}… · Status: {result.Body.Status}",
+                    Duration = 5000,
+                });
+                await RefreshAsync();
+            }
+            else
+            {
+                Notifications.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Error,
+                    Summary = "Falha na validação",
+                    Detail = string.Join(" · ", result.Errors ?? []),
+                    Duration = 8000,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Notifications.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Erro inesperado",
+                Detail = ex.Message,
+                Duration = 8000,
+            });
+        }
+        finally
+        {
+            _uploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private static BadgeStyle BadgeStyleFor(string status) => status switch
+    {
+        Status.Pendente => BadgeStyle.Secondary,
+        Status.Processando => BadgeStyle.Info,
+        Status.Concluida => BadgeStyle.Success,
+        Status.Falha => BadgeStyle.Danger,
+        _ => BadgeStyle.Light,
+    };
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}
