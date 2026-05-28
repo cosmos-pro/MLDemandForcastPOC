@@ -1,5 +1,6 @@
 using CosmosPro.ML.DemandForCast.Engine;
 using CosmosPro.ML.DemandForCast.Worker;
+using CosmosPro.ML.DemandForCast.Worker.Training;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -17,6 +18,11 @@ builder.AddMinioClient("minio");
 
 builder.Services.AddSingleton<CargaProcessor>();
 builder.Services.AddHostedService<ImportWorker>();
+
+// Treino do engine de previsão: processador + loop de polling próprio (corre em
+// paralelo ao ImportWorker, mesma fila-pattern sobre engine.TreinoJobs).
+builder.Services.AddSingleton<TreinoProcessor>();
+builder.Services.AddHostedService<TreinoWorker>();
 
 var host = builder.Build();
 await host.RunAsync();

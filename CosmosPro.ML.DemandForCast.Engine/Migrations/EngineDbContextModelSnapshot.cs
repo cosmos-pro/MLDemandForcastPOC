@@ -70,6 +70,51 @@ namespace CosmosPro.ML.DemandForCast.Engine.Migrations
 
                     b.ToTable("CargasStage", (string)null);
                 });
+
+            modelBuilder.Entity("CosmosPro.ML.DemandForCast.Engine.Entities.TreinoJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("DataAgendamento")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("DataConclusao")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("DataInicioProcessamento")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long?>("FeaturesGeradas")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("MaxSkus")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MensagemErro")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("ModeloBlobKey")
+                        .HasMaxLength(260)
+                        .HasColumnType("nvarchar(260)");
+
+                    b.Property<string>("ResultadoJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "DataAgendamento")
+                        .HasDatabaseName("IX_TreinoJobs_Status_DataAgendamento");
+
+                    b.ToTable("TreinoJobs", (string)null);
+                });
 #pragma warning restore 612, 618
         }
     }

@@ -1,53 +1,200 @@
 @page "/treinamento"
 @rendermode InteractiveServer
+@inject TrainingApiClient TrainingApi
+@inject NotificationService Notifications
+@implements IDisposable
 
 <PageTitle>Treinamento</PageTitle>
 
 <RadzenStack Orientation="Orientation.Vertical" Gap="1.5rem">
     <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
         <RadzenText TextStyle="TextStyle.H4" Style="margin: 0">Treinamento do modelo</RadzenText>
-        <HelpTip Position="TooltipPosition.Bottom" Text="Aqui você vai disparar o treino do engine de previsão de demanda (LightGBM) sobre as features extraídas dos dados do Stage, com avaliação walk-forward. Em construção (fase F6)." />
+        <HelpTip Position="TooltipPosition.Bottom" Text="Treina os previsores de demanda sobre os dados já importados no Stage e compara, via backtest walk-forward, o LightGBM contra os baselines (naïve sazonal e média móvel). O melhor modelo é salvo para gerar sugestões de compra (F8)." />
+        <div style="flex: 1"></div>
+        <RadzenFormField Text="Top SKUs" Variant="Variant.Outlined" Style="width: 120px">
+            <RadzenNumeric @bind-Value="_maxSkus" Min="1" Max="5000" />
+        </RadzenFormField>
+        <RadzenButton Click="@Treinar"
+                      Icon="@(_enqueuing ? "hourglass_empty" : "model_training")"
+                      Text="@(_enqueuing ? "Enfileirando…" : "Treinar")"
+                      ButtonStyle="ButtonStyle.Primary"
+                      Disabled="@_enqueuing"
+                      MouseEnter="@(a => Tip(a, "Enfileira um treino. O Worker processa em background: carrega o Stage, gera features, roda o backtest e salva o modelo. Acompanhe o status na tabela abaixo."))" />
     </RadzenStack>
 
     <RadzenCard Variant="Variant.Outlined">
-        <RadzenStack Orientation="Orientation.Vertical" Gap="1rem">
-            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
-                <RadzenIcon Icon="construction" Style="color: var(--rz-warning);" />
-                <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Em construção — fase F6</RadzenText>
-            </RadzenStack>
-
-            <RadzenText TextStyle="TextStyle.Body1" Style="margin: 0;">
-                O motor de previsão ainda não está implementado. Quando estiver, esta tela vai permitir:
-            </RadzenText>
-
-            <RadzenStack Orientation="Orientation.Vertical" Gap="0.5rem" Style="padding-left: 0.5rem;">
-                @foreach (var (icon, texto) in _passos)
-                {
-                    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
-                        <RadzenIcon Icon="@icon" Style="color: var(--rz-text-secondary-color); font-size: 1.1rem;" />
-                        <RadzenText TextStyle="TextStyle.Body2" Style="margin: 0;">@texto</RadzenText>
-                    </RadzenStack>
-                }
-            </RadzenStack>
-
-            <div>
-                <RadzenButton Text="Treinar modelo" Icon="model_training" ButtonStyle="ButtonStyle.Primary"
-                              Disabled="true" />
-                <RadzenText TextStyle="TextStyle.Caption" Style="margin: 0.5rem 0 0; color: var(--rz-text-tertiary-color);">
-                    Disponível após a implementação do engine (F6).
-                </RadzenText>
-            </div>
+        <RadzenStack Gap="1rem">
+            <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Execuções de treino</RadzenText>
+            <RadzenDataGrid TItem="TreinoJobView" Data="@_jobs" AllowPaging="true" PageSize="8"
+                            Density="Density.Compact" IsLoading="@(_loading && _jobs.Count == 0)"
+                            EmptyText="Nenhum treino executado ainda."
+                            RowSelect="@OnSelect"
+                            SelectionMode="DataGridSelectionMode.Single">
+                <Columns>
+                    <RadzenDataGridColumn TItem="TreinoJobView" Property="Status" Title="Status" Width="130px">
+                        <Template Context="j">
+                            <RadzenBadge Text="@j.Status" BadgeStyle="@BadgeFor(j.Status)" Shade="Shade.Lighter" />
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="TreinoJobView" Property="DataAgendamento" Title="Agendado" Width="170px">
+                        <Template Context="j"><small>@j.DataAgendamento.ToLocalTime().ToString("dd/MM HH:mm:ss")</small></Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="TreinoJobView" Property="DataConclusao" Title="Concluído" Width="120px">
+                        <Template Context="j"><small>@(j.DataConclusao?.ToLocalTime().ToString("HH:mm:ss") ?? "—")</small></Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="TreinoJobView" Property="MaxSkus" Title="SKUs" Width="80px" TextAlign="TextAlign.Right" />
+                    <RadzenDataGridColumn TItem="TreinoJobView" Property="FeaturesGeradas" Title="Features" Width="110px" TextAlign="TextAlign.Right">
+                        <Template Context="j">@(j.FeaturesGeradas?.ToString("N0") ?? "—")</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="TreinoJobView" Title="Detalhe">
+                        <Template Context="j">
+                            @if (j.Status == "Falha")
+                            {
+                                <small style="color: var(--rz-danger)">@j.MensagemErro</small>
+                            }
+                            else if (j.Status == "Concluido")
+                            {
+                                <RadzenButton Text="Ver resultado" Icon="bar_chart" Size="ButtonSize.Small"
+                                              ButtonStyle="ButtonStyle.Light" Click="@(() => OnSelect(j))" />
+                            }
+                        </Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
         </RadzenStack>
     </RadzenCard>
+
+    @if (_selected is { Status: "Concluido" } && TrainingApiClient.ParseResultado(_selected.ResultadoJson) is { } r)
+    {
+        <RadzenCard Variant="Variant.Outlined">
+            <RadzenStack Gap="1rem">
+                <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+                    <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Comparação walk-forward</RadzenText>
+                    <HelpTip Text="@($"WAPE e MAE são as métricas primárias (MAPE quebra em demanda baixa). Menor é melhor. O backtest usa {r.Folds} janelas de {r.TestWindowDias} dias. O melhor engine por WAPE fica destacado.")" />
+                    <RadzenBadge Text="@($"melhor: {r.MelhorEngine}")" BadgeStyle="BadgeStyle.Success" IsPill="true" />
+                </RadzenStack>
+
+                <RadzenText TextStyle="TextStyle.Caption" Style="margin: 0; color: var(--rz-text-secondary-color)">
+                    @r.SkusUsados SKUs · @r.TotalObservacoes.ToString("N0") observações · @r.TotalFeatures.ToString("N0") features
+                </RadzenText>
+
+                <RadzenDataGrid TItem="EngineResult" Data="@r.Engines" AllowPaging="false" Density="Density.Compact">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="EngineResult" Property="Engine" Title="Engine">
+                            <Template Context="e">
+                                <strong>@e.Engine</strong>
+                                @if (e.Engine == r.MelhorEngine)
+                                {
+                                    <RadzenIcon Icon="emoji_events" Style="color: var(--rz-warning); font-size: 1rem; margin-left: 0.25rem;" />
+                                }
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="EngineResult" Title="WAPE" Width="110px" TextAlign="TextAlign.Right">
+                            <Template Context="e">@e.Global.Wape.ToString("P1")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="EngineResult" Title="MAE" Width="110px" TextAlign="TextAlign.Right">
+                            <Template Context="e">@e.Global.Mae.ToString("N2")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="EngineResult" Title="RMSE" Width="110px" TextAlign="TextAlign.Right">
+                            <Template Context="e">@e.Global.Rmse.ToString("N2")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="EngineResult" Title="MAPE" Width="110px" TextAlign="TextAlign.Right">
+                            <Template Context="e">@(e.Global.Mape is { } m ? m.ToString("P1") : "—")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="EngineResult" Title="Amostras (n)" Width="120px" TextAlign="TextAlign.Right">
+                            <Template Context="e">@e.Global.N.ToString("N0")</Template>
+                        </RadzenDataGridColumn>
+                    </Columns>
+                </RadzenDataGrid>
+            </RadzenStack>
+        </RadzenCard>
+    }
 </RadzenStack>
 
 @code {
-    private static readonly (string Icon, string Texto)[] _passos =
-    [
-        ("dataset", "Selecionar a base de treino (dados já carregados no Stage)."),
-        ("tune", "Configurar horizonte (7 dias), lead time e janelas de feature."),
-        ("model_training", "Treinar LightGBM (modelo global, SKU como feature) e baselines (naïve sazonal, eMax/eSeg)."),
-        ("analytics", "Avaliar com walk-forward: MAE, MAPE, WAPE, RMSE por hierarquia."),
-        ("save", "Persistir o modelo e comparar versões."),
-    ];
+    [Inject] private TooltipService TooltipService { get; set; } = null!;
+
+    private int _maxSkus = 80;
+    private bool _enqueuing;
+    private bool _loading;
+    private List<TreinoJobView> _jobs = [];
+    private TreinoJobView? _selected;
+    private Timer? _timer;
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _timer = new Timer(async _ => await InvokeAsync(RefreshAsync), null,
+            TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_loading) return;
+        _loading = true;
+        try
+        {
+            _jobs = [.. await TrainingApi.ListAsync(50, _cts.Token)];
+            StateHasChanged();
+        }
+        catch (OperationCanceledException) { }
+        catch { /* POC: silencia polling */ }
+        finally { _loading = false; }
+    }
+
+    // Seleciona um job; busca o detalhe (com ResultadoJson) se concluído.
+    private async Task OnSelect(TreinoJobView j)
+    {
+        _selected = j.Status == "Concluido" && j.ResultadoJson is null
+            ? await TrainingApi.GetAsync(j.Id, _cts.Token) ?? j
+            : j;
+    }
+
+    private async Task Treinar()
+    {
+        _enqueuing = true;
+        try
+        {
+            var job = await TrainingApi.EnqueueAsync(_maxSkus);
+            if (job is not null)
+            {
+                Notifications.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Success,
+                    Summary = "Treino enfileirado",
+                    Detail = $"O Worker vai processar em background ({_maxSkus} SKUs).",
+                    Duration = 5000,
+                });
+                await RefreshAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Notifications.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error, Summary = "Falha ao enfileirar", Detail = ex.Message, Duration = 8000,
+            });
+        }
+        finally { _enqueuing = false; }
+    }
+
+    private static BadgeStyle BadgeFor(string status) => status switch
+    {
+        "Pendente" => BadgeStyle.Secondary,
+        "Processando" => BadgeStyle.Info,
+        "Concluido" => BadgeStyle.Success,
+        "Falha" => BadgeStyle.Danger,
+        _ => BadgeStyle.Light,
+    };
+
+    private void Tip(ElementReference el, string text) =>
+        TooltipService.Open(el, text, new TooltipOptions { Position = TooltipPosition.Bottom, Duration = 6000, Style = "max-width: 320px;" });
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _cts.Cancel();
+        _cts.Dispose();
+    }
 }

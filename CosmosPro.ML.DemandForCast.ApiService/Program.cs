@@ -1,5 +1,6 @@
 using CosmosPro.ML.DemandForCast.ApiService.Imports;
 using CosmosPro.ML.DemandForCast.ApiService.Stage;
+using CosmosPro.ML.DemandForCast.ApiService.Training;
 using CosmosPro.ML.DemandForCast.Engine;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -49,6 +50,7 @@ app.MapGet("/", () => "CosmosPro ML DemandForCast — API service.");
 
 app.MapImportsEndpoints();
 app.MapStageEndpoints();
+app.MapTrainingEndpoints();
 
 app.MapDefaultEndpoints();
 
