@@ -76,6 +76,10 @@ public sealed class WalkForwardBacktest(WalkForwardOptions? options = null)
             }
             allPairs.AddRange(foldPairs);
 
+            // Modelos com recursos nativos (ex.: PredictionEngine do LightGBM) são
+            // recriados a cada fold — libera para não vazar entre folds.
+            if (model is IDisposable disposable) disposable.Dispose();
+
             var foldMetrics = ForecastMetrics.Compute(foldPairs.Select(p => (p.Actual, p.Predicted)).ToList());
             folds.Add(new FoldResult(
                 folds.Count + 1, trainAte, testeInicio, testeFim, train.Count, test.Count, foldMetrics));
