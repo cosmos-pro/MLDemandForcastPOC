@@ -144,12 +144,14 @@
     {
         if (_loading) return;
         _loading = true;
+        // StateHasChanged no finally (não no try): se chamado dentro do try, a UI
+        // renderiza o snapshot com _loading=true e o botão refresh nunca volta a
+        // ficar enabled — porque o finally que zera _loading não notifica.
         try
         {
             var list = await ImportsApi.ListAsync(50, _cts.Token);
             _jobs = [.. list];
             RecomputeKpis();
-            StateHasChanged();
         }
         catch (OperationCanceledException) { }
         catch (Exception)
@@ -159,6 +161,7 @@
         finally
         {
             _loading = false;
+            StateHasChanged();
         }
     }
 

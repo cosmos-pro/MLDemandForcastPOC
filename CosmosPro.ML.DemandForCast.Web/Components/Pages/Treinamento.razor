@@ -43,7 +43,11 @@
                         <Template Context="j"><small>@(j.DataConclusao?.ToLocalTime().ToString("HH:mm:ss") ?? "—")</small></Template>
                     </RadzenDataGridColumn>
                     <RadzenDataGridColumn TItem="TreinoJobView" Property="MaxSkus" Title="SKUs" Width="80px" TextAlign="TextAlign.Right" />
-                    <RadzenDataGridColumn TItem="TreinoJobView" Property="FeaturesGeradas" Title="Features" Width="110px" TextAlign="TextAlign.Right">
+                    <RadzenDataGridColumn TItem="TreinoJobView" Property="FeaturesGeradas" Title="Features" Width="120px" TextAlign="TextAlign.Right">
+                        <HeaderTemplate>
+                            <span>Features</span>
+                            <HelpTip Text="@TipFeatures" Size="0.85rem" />
+                        </HeaderTemplate>
                         <Template Context="j">@(j.FeaturesGeradas?.ToString("N0") ?? "—")</Template>
                     </RadzenDataGridColumn>
                     <RadzenDataGridColumn TItem="TreinoJobView" Title="Detalhe">
@@ -83,29 +87,113 @@
                         <RadzenDataGridColumn TItem="EngineResult" Property="Engine" Title="Engine">
                             <Template Context="e">
                                 <strong>@e.Engine</strong>
+                                @if (_engineTips.TryGetValue(e.Engine, out var desc))
+                                {
+                                    <HelpTip Text="@desc" Size="0.85rem" />
+                                }
                                 @if (e.Engine == r.MelhorEngine)
                                 {
                                     <RadzenIcon Icon="emoji_events" Style="color: var(--rz-warning); font-size: 1rem; margin-left: 0.25rem;" />
                                 }
                             </Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="EngineResult" Title="WAPE" Width="110px" TextAlign="TextAlign.Right">
+                        <RadzenDataGridColumn TItem="EngineResult" Title="WAPE" Width="120px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>WAPE</span><HelpTip Text="@TipWape" Size="0.85rem" /></HeaderTemplate>
                             <Template Context="e">@e.Global.Wape.ToString("P1")</Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="EngineResult" Title="MAE" Width="110px" TextAlign="TextAlign.Right">
+                        <RadzenDataGridColumn TItem="EngineResult" Title="MAE" Width="120px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>MAE</span><HelpTip Text="@TipMae" Size="0.85rem" /></HeaderTemplate>
                             <Template Context="e">@e.Global.Mae.ToString("N2")</Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="EngineResult" Title="RMSE" Width="110px" TextAlign="TextAlign.Right">
+                        <RadzenDataGridColumn TItem="EngineResult" Title="RMSE" Width="120px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>RMSE</span><HelpTip Text="@TipRmse" Size="0.85rem" /></HeaderTemplate>
                             <Template Context="e">@e.Global.Rmse.ToString("N2")</Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="EngineResult" Title="MAPE" Width="110px" TextAlign="TextAlign.Right">
+                        <RadzenDataGridColumn TItem="EngineResult" Title="MAPE" Width="120px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>MAPE</span><HelpTip Text="@TipMape" Size="0.85rem" /></HeaderTemplate>
                             <Template Context="e">@(e.Global.Mape is { } m ? m.ToString("P1") : "—")</Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="EngineResult" Title="Amostras (n)" Width="120px" TextAlign="TextAlign.Right">
+                        <RadzenDataGridColumn TItem="EngineResult" Title="Amostras (n)" Width="130px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>Amostras (n)</span><HelpTip Text="@TipN" Size="0.85rem" /></HeaderTemplate>
                             <Template Context="e">@e.Global.N.ToString("N0")</Template>
                         </RadzenDataGridColumn>
                     </Columns>
                 </RadzenDataGrid>
+            </RadzenStack>
+        </RadzenCard>
+
+        <RadzenCard Variant="Variant.Outlined">
+            <RadzenStack Gap="1rem">
+                <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+                    <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Drill-down por hierarquia</RadzenText>
+                    <HelpTip Text="Médias globais escondem regressões locais (CLAUDE.md §6). Esta visão mostra o erro de cada engine por categoria/classe/loja/UF — chaves marcadas em vermelho são onde o LightGBM PIORA frente ao melhor baseline, e merecem análise antes de promover o modelo." />
+                </RadzenStack>
+
+                <RadzenTabs RenderMode="TabRenderMode.Client">
+                    <Tabs>
+                        @foreach (var dim in _dimensions)
+                        {
+                            var rows = BuildDrillRows(r.Engines, dim);
+                            <RadzenTabsItem Text="@($"{dim} ({rows.Count})")">
+                                @if (rows.Count == 0)
+                                {
+                                    <RadzenText TextStyle="TextStyle.Body2" Style="color: var(--rz-text-secondary-color)">
+                                        Sem dados nesta dimensão.
+                                    </RadzenText>
+                                }
+                                else
+                                {
+                                    var regressoes = rows.Count(rr => rr.LightGbmRegrediu);
+                                    if (regressoes > 0)
+                                    {
+                                        <RadzenAlert AlertStyle="AlertStyle.Warning" Shade="Shade.Lighter" AllowClose="false" Style="margin-bottom: 0.5rem">
+                                            <RadzenIcon Icon="warning" Style="margin-right: 0.25rem; vertical-align: middle;" />
+                                            @regressoes de @rows.Count @(rows.Count == 1 ? "linha" : "linhas") com regressão do LightGBM (pior que o melhor baseline). Investigar antes de promover.
+                                        </RadzenAlert>
+                                    }
+                                    <RadzenDataGrid TItem="DrillRow" Data="@rows" AllowPaging="true" PageSize="10" AllowSorting="true" Density="Density.Compact">
+                                        <Columns>
+                                            <RadzenDataGridColumn TItem="DrillRow" Property="Chave" Title="@dim" />
+                                            <RadzenDataGridColumn TItem="DrillRow" Property="N" Title="n" Width="90px" TextAlign="TextAlign.Right">
+                                                <HeaderTemplate><span>n</span><HelpTip Text="@TipN" Size="0.85rem" /></HeaderTemplate>
+                                                <Template Context="row">@row.N.ToString("N0")</Template>
+                                            </RadzenDataGridColumn>
+                                            @foreach (var eng in r.Engines.Select(e => e.Engine))
+                                            {
+                                                var engTip = _engineTips.TryGetValue(eng, out var et) ? et : "";
+                                                <RadzenDataGridColumn TItem="DrillRow" Title="@($"WAPE {eng}")" Width="150px" TextAlign="TextAlign.Right" Sortable="false">
+                                                    <HeaderTemplate>
+                                                        <span>WAPE @eng</span>
+                                                        <HelpTip Text="@($"{TipWape}\n\nEngine: {engTip}")" Size="0.85rem" />
+                                                    </HeaderTemplate>
+                                                    <Template Context="row">
+                                                        @(row.WapeByEngine.TryGetValue(eng, out var w) ? w.ToString("P1") : "—")
+                                                    </Template>
+                                                </RadzenDataGridColumn>
+                                            }
+                                            <RadzenDataGridColumn TItem="DrillRow" Property="Vencedor" Title="Vencedor" Width="160px">
+                                                <HeaderTemplate><span>Vencedor</span><HelpTip Text="@TipVencedor" Size="0.85rem" /></HeaderTemplate>
+                                                <Template Context="row">
+                                                    <RadzenBadge Text="@row.Vencedor" BadgeStyle="@(row.Vencedor == "lightgbm" ? BadgeStyle.Success : BadgeStyle.Secondary)" Shade="Shade.Lighter" />
+                                                </Template>
+                                            </RadzenDataGridColumn>
+                                            <RadzenDataGridColumn TItem="DrillRow" Title="Regressão?" Width="140px" Sortable="false">
+                                                <HeaderTemplate><span>Regressão?</span><HelpTip Text="@TipRegressao" Size="0.85rem" /></HeaderTemplate>
+                                                <Template Context="row">
+                                                    @if (row.LightGbmRegrediu)
+                                                    {
+                                                        <RadzenIcon Icon="trending_down" Style="color: var(--rz-danger); vertical-align: middle;" />
+                                                        <span style="color: var(--rz-danger); margin-left: 0.25rem;">sim</span>
+                                                    }
+                                                </Template>
+                                            </RadzenDataGridColumn>
+                                        </Columns>
+                                    </RadzenDataGrid>
+                                }
+                            </RadzenTabsItem>
+                        }
+                    </Tabs>
+                </RadzenTabs>
             </RadzenStack>
         </RadzenCard>
     }
@@ -113,6 +201,109 @@
 
 @code {
     [Inject] private TooltipService TooltipService { get; set; } = null!;
+
+    private static readonly string[] _dimensions = ["Categoria", "ClasseAbc", "Loja", "UF"];
+    private const string LightGbmName = "lightgbm";
+
+    // Textos dos balões de ajuda — concentrados aqui pra ficar fácil revisar/ajustar.
+    private const string TipWape =
+        "WAPE (Weighted Absolute Percentage Error): soma dos erros absolutos / soma dos valores reais. " +
+        "É a métrica primária aqui — mais robusta que MAPE quando há demanda baixa ou zero (comum em farma). Menor = melhor.";
+    private const string TipMae =
+        "MAE (Mean Absolute Error): erro absoluto médio na mesma unidade da demanda. " +
+        "Interpretação direta: 'erro médio de X unidades por dia–SKU–loja'. Menor = melhor.";
+    private const string TipRmse =
+        "RMSE (Root Mean Squared Error): raiz do erro quadrático médio. Penaliza desvios grandes muito mais " +
+        "que erros pequenos — útil pra pegar previsões que erram feio em poucos casos. Menor = melhor; sempre ≥ MAE.";
+    private const string TipMape =
+        "MAPE (Mean Absolute Percentage Error): erro percentual médio. Quebra quando o real é zero (divisão por zero) — " +
+        "comum em SKUs intermitentes. Calculamos só sobre pontos com real ≠ 0; tome o WAPE como referência primária.";
+    private const string TipN =
+        "Número de pares (real, previsto) avaliados no backtest — pontos do conjunto de teste com IsValidTarget=true " +
+        "(dias sem ruptura). Mais amostras = métrica mais estável.";
+    private const string TipRegressao =
+        "Sinaliza quando o LightGBM PERDE para algum baseline (naïve ou média móvel) nesta chave. " +
+        "CLAUDE.md §6 alerta que médias globais escondem regressões locais — chaves marcadas merecem inspeção " +
+        "antes de promover o modelo.";
+    private const string TipFeatures =
+        "Total de linhas de feature geradas pelo feature engineering (F5) e usadas como entrada do backtest. " +
+        "Cada linha representa um dia–SKU–loja com histórico suficiente (≥ 34 dias) e IsValidTarget=true.";
+    private const string TipVencedor =
+        "Engine com menor WAPE nesta chave da hierarquia. Conta como ranking local — não confunda com o vencedor global.";
+
+    private static readonly IReadOnlyDictionary<string, string> _engineTips =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["naive-sazonal"] =
+                "Baseline mínimo: a previsão para o dia D é a venda observada 7 dias antes (mesmo dia da semana). " +
+                "Não 'aprende' nada — só copia. Se o ML não vencer isso, não vale a complexidade.",
+            ["media-movel-7"] =
+                "Baseline: previsão = média das vendas dos últimos 7 dias (terminando 7 dias antes de D — respeita o lead time).",
+            ["media-movel-28"] =
+                "Baseline mais estável: previsão = média das últimas 28 vendas do SKU–loja (terminando 7 dias antes de D, respeitando o lead time). " +
+                "Captura o nível, não a sazonalidade.",
+            ["lightgbm"] =
+                "Engine principal: LightGBM regressão (modelo global, SKU como feature) sobre lags, médias móveis, " +
+                "sazonalidade semanal/anual, promoção, calendário e hierarquia categórica.",
+        };
+
+    /// <summary>Linha pivotada do drill-down: chave + métrica por engine + flags.</summary>
+    public sealed record DrillRow(
+        string Chave,
+        int N,
+        IReadOnlyDictionary<string, double> WapeByEngine,
+        string Vencedor,
+        bool LightGbmRegrediu);
+
+    /// <summary>
+    /// Pivota o resultado por dimensão: cada chave (ex.: "OTC", "A", "1", "SP") vira
+    /// uma linha com WAPE de cada engine, vencedor por WAPE e flag de regressão do
+    /// LightGBM frente ao melhor baseline (CLAUDE.md §6 — caçar regressões locais).
+    /// </summary>
+    private static IReadOnlyList<DrillRow> BuildDrillRows(IReadOnlyList<EngineResult> engines, string dim)
+    {
+        var keys = engines
+            .SelectMany(e => e.PorDimensao is null ? [] :
+                e.PorDimensao.TryGetValue(dim, out var d) ? d.Keys : (IEnumerable<string>)[])
+            .Distinct()
+            .ToList();
+
+        var rows = new List<DrillRow>(keys.Count);
+        foreach (var key in keys)
+        {
+            var wape = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            int n = 0;
+            string vencedor = "";
+            double melhor = double.PositiveInfinity;
+
+            foreach (var e in engines)
+            {
+                if (e.PorDimensao is null) continue;
+                if (!e.PorDimensao.TryGetValue(dim, out var byKey)) continue;
+                if (!byKey.TryGetValue(key, out var m)) continue;
+                wape[e.Engine] = m.Wape;
+                if (m.N > n) n = m.N;
+                if (m.Wape < melhor) { melhor = m.Wape; vencedor = e.Engine; }
+            }
+
+            // Regressão = LightGBM existe E perdeu para algum baseline (WAPE maior que mínimo dos baselines).
+            bool regrediu = false;
+            if (wape.TryGetValue(LightGbmName, out var lgWape))
+            {
+                var melhorBaseline = wape
+                    .Where(kv => !kv.Key.Equals(LightGbmName, StringComparison.OrdinalIgnoreCase))
+                    .Select(kv => kv.Value)
+                    .DefaultIfEmpty(double.PositiveInfinity)
+                    .Min();
+                regrediu = lgWape > melhorBaseline;
+            }
+
+            rows.Add(new DrillRow(key, n, wape, vencedor, regrediu));
+        }
+
+        // Ordena por N desc (chaves mais relevantes primeiro), depois por chave.
+        return rows.OrderByDescending(r => r.N).ThenBy(r => r.Chave, StringComparer.OrdinalIgnoreCase).ToList();
+    }
 
     private int _maxSkus = 80;
     private bool _enqueuing;
@@ -133,14 +324,19 @@
     {
         if (_loading) return;
         _loading = true;
+        // StateHasChanged no finally — se chamado dentro do try, a UI renderiza com
+        // _loading=true e botões "carregando" nunca voltam ao normal.
         try
         {
             _jobs = [.. await TrainingApi.ListAsync(50, _cts.Token)];
-            StateHasChanged();
         }
         catch (OperationCanceledException) { }
         catch { /* POC: silencia polling */ }
-        finally { _loading = false; }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
     }
 
     // Seleciona um job; busca o detalhe (com ResultadoJson) se concluído.
