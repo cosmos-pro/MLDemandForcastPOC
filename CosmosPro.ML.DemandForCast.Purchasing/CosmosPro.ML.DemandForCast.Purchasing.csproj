@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>CosmosPro.ML.DemandForCast.Purchasing</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CosmosPro.ML.DemandForCast.Features\CosmosPro.ML.DemandForCast.Features.csproj" />
+    <ProjectReference Include="..\CosmosPro.ML.DemandForCast.Forecasting\CosmosPro.ML.DemandForCast.Forecasting.csproj" />
+  </ItemGroup>
+
+</Project>

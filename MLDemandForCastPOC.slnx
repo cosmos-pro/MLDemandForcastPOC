@@ -6,6 +6,7 @@
   <Project Path="CosmosPro.ML.DemandForCast.Features/CosmosPro.ML.DemandForCast.Features.csproj" />
   <Project Path="CosmosPro.ML.DemandForCast.Forecasting/CosmosPro.ML.DemandForCast.Forecasting.csproj" />
   <Project Path="CosmosPro.ML.DemandForCast.OlapSchema/CosmosPro.ML.DemandForCast.OlapSchema.csproj" />
+  <Project Path="CosmosPro.ML.DemandForCast.Purchasing/CosmosPro.ML.DemandForCast.Purchasing.csproj" />
   <Project Path="CosmosPro.ML.DemandForCast.ServiceDefaults/CosmosPro.ML.DemandForCast.ServiceDefaults.csproj" />
   <Project Path="CosmosPro.ML.DemandForCast.SyntheticData/CosmosPro.ML.DemandForCast.SyntheticData.csproj" />
   <Project Path="CosmosPro.ML.DemandForCast.Web/CosmosPro.ML.DemandForCast.Web.csproj" />
@@ -22,5 +23,6 @@
     <Project Path="tests/CosmosPro.ML.DemandForCast.SyntheticData.Tests/CosmosPro.ML.DemandForCast.SyntheticData.Tests.csproj" />
     <Project Path="tests/CosmosPro.ML.DemandForCast.Features.Tests/CosmosPro.ML.DemandForCast.Features.Tests.csproj" />
     <Project Path="tests/CosmosPro.ML.DemandForCast.Forecasting.Tests/CosmosPro.ML.DemandForCast.Forecasting.Tests.csproj" />
+    <Project Path="tests/CosmosPro.ML.DemandForCast.Purchasing.Tests/CosmosPro.ML.DemandForCast.Purchasing.Tests.csproj" />
   </Folder>
 </Solution>

@@ -1,5 +1,6 @@
 using CosmosPro.ML.DemandForCast.Engine;
 using CosmosPro.ML.DemandForCast.Worker;
+using CosmosPro.ML.DemandForCast.Worker.Purchasing;
 using CosmosPro.ML.DemandForCast.Worker.Training;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -23,6 +24,11 @@ builder.Services.AddHostedService<ImportWorker>();
 // paralelo ao ImportWorker, mesma fila-pattern sobre engine.TreinoJobs).
 builder.Services.AddSingleton<TreinoProcessor>();
 builder.Services.AddHostedService<TreinoWorker>();
+
+// Simulação de compra (F8): mesma fila-pattern sobre engine.SimulacoesCompra.
+// Replay das políticas eMax/eSeg vs ROP+forecast com KPIs comparativos.
+builder.Services.AddScoped<SimulacaoProcessor>();
+builder.Services.AddHostedService<SimulacaoWorker>();
 
 var host = builder.Build();
 await host.RunAsync();

@@ -7,9 +7,31 @@ public sealed class EngineDbContext(DbContextOptions<EngineDbContext> options) :
 {
     public DbSet<CargaStage> CargasStage => Set<CargaStage>();
     public DbSet<TreinoJob> TreinoJobs => Set<TreinoJob>();
+    public DbSet<SimulacaoCompra> SimulacoesCompra => Set<SimulacaoCompra>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<SimulacaoCompra>(b =>
+        {
+            b.ToTable("SimulacoesCompra");
+            b.HasKey(x => x.Id);
+
+            b.Property(x => x.Status)
+             .HasConversion<string>()
+             .HasMaxLength(20)
+             .IsRequired();
+
+            b.Property(x => x.DataAgendamento).IsRequired();
+            b.Property(x => x.TreinoJobId).IsRequired();
+            b.Property(x => x.MensagemErro).HasMaxLength(2000);
+            b.Property(x => x.ResultadoJson);
+
+            // FK lógica (sem cascata) para preservar histórico mesmo se o treino for removido.
+            b.HasIndex(x => x.TreinoJobId).HasDatabaseName("IX_SimulacoesCompra_TreinoJobId");
+            b.HasIndex(x => new { x.Status, x.DataAgendamento })
+             .HasDatabaseName("IX_SimulacoesCompra_Status_DataAgendamento");
+        });
+
         modelBuilder.Entity<TreinoJob>(b =>
         {
             b.ToTable("TreinoJobs");

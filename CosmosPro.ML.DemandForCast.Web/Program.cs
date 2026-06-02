@@ -30,6 +30,11 @@ builder.Services.AddHttpClient<TrainingApiClient>(client =>
     client.BaseAddress = new("https+http://apiservice");
 });
 
+builder.Services.AddHttpClient<PurchasingApiClient>(client =>
+{
+    client.BaseAddress = new("https+http://apiservice");
+});
+
 const long MaxUploadBytes = 500L * 1024 * 1024;
 builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(o =>
     o.Limits.MaxRequestBodySize = MaxUploadBytes);

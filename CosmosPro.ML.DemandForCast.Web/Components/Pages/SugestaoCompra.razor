@@ -1,0 +1,423 @@
+@page "/sugestao-compra"
+@rendermode InteractiveServer
+@inject PurchasingApiClient PurchasingApi
+@inject TrainingApiClient TrainingApi
+@inject NotificationService Notifications
+@implements IDisposable
+
+<PageTitle>Sugestão de compra</PageTitle>
+
+<RadzenStack Orientation="Orientation.Vertical" Gap="1.5rem">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+        <RadzenText TextStyle="TextStyle.H4" Style="margin: 0">Sugestão de compra</RadzenText>
+        <HelpTip Position="TooltipPosition.Bottom" Text="@TipPagina" />
+        <div style="flex: 1"></div>
+    </RadzenStack>
+
+    <RadzenCard Variant="Variant.Outlined">
+        <RadzenStack Gap="1rem">
+            <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Nova simulação</RadzenText>
+            <RadzenStack Orientation="Orientation.Horizontal" Wrap="FlexWrap.Wrap" Gap="1rem" AlignItems="AlignItems.End">
+                <RadzenFormField Text="Treino origem" Variant="Variant.Outlined" Style="width: 320px">
+                    <RadzenDropDown Data="@_treinosConcluidos" TValue="Guid" @bind-Value="_treinoJobId"
+                                    TextProperty="Label" ValueProperty="Id"
+                                    Placeholder="Escolha um treino concluído" AllowClear="false" />
+                </RadzenFormField>
+                <RadzenFormField Text="Janela (dias)" Variant="Variant.Outlined" Style="width: 130px">
+                    <RadzenNumeric @bind-Value="_janelaDias" Min="14" Max="365" />
+                </RadzenFormField>
+                <RadzenFormField Text="Lead time (dias)" Variant="Variant.Outlined" Style="width: 140px">
+                    <RadzenNumeric @bind-Value="_leadTime" Min="1" Max="30" />
+                </RadzenFormField>
+                <RadzenFormField Text="Ciclo (dias)" Variant="Variant.Outlined" Style="width: 120px">
+                    <RadzenNumeric @bind-Value="_ciclo" Min="1" Max="30" />
+                </RadzenFormField>
+                <RadzenFormField Text="Fator z" Variant="Variant.Outlined" Style="width: 110px">
+                    <RadzenNumeric @bind-Value="_fatorServico" Min="0" Max="4" Step="0.05" />
+                </RadzenFormField>
+                <HelpTip Text="@TipFator" />
+                <RadzenButton Click="@Simular"
+                              Icon="@(_enqueuing ? "hourglass_empty" : "play_arrow")"
+                              Text="@(_enqueuing ? "Enfileirando…" : "Simular")"
+                              ButtonStyle="ButtonStyle.Primary"
+                              Disabled="@(_enqueuing || _treinoJobId == Guid.Empty)" />
+            </RadzenStack>
+        </RadzenStack>
+    </RadzenCard>
+
+    <RadzenCard Variant="Variant.Outlined">
+        <RadzenStack Gap="1rem">
+            <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Execuções</RadzenText>
+            <RadzenDataGrid TItem="SimulacaoView" Data="@_jobs" AllowPaging="true" PageSize="8"
+                            Density="Density.Compact" IsLoading="@(_loading && _jobs.Count == 0)"
+                            EmptyText="Nenhuma simulação executada ainda."
+                            RowSelect="@OnSelect"
+                            SelectionMode="DataGridSelectionMode.Single">
+                <Columns>
+                    <RadzenDataGridColumn TItem="SimulacaoView" Property="Status" Title="Status" Width="130px">
+                        <Template Context="j">
+                            <RadzenBadge Text="@j.Status" BadgeStyle="@BadgeFor(j.Status)" Shade="Shade.Lighter" />
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="SimulacaoView" Property="DataAgendamento" Title="Agendado" Width="170px">
+                        <Template Context="j"><small>@j.DataAgendamento.ToLocalTime().ToString("dd/MM HH:mm:ss")</small></Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="SimulacaoView" Property="JanelaDias" Title="Janela" Width="90px" TextAlign="TextAlign.Right">
+                        <Template Context="j">@j.JanelaDias d</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="SimulacaoView" Property="LeadTimeDias" Title="LT" Width="70px" TextAlign="TextAlign.Right">
+                        <Template Context="j">@j.LeadTimeDias d</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="SimulacaoView" Property="FatorServico" Title="z" Width="70px" TextAlign="TextAlign.Right">
+                        <Template Context="j">@j.FatorServico.ToString("F2")</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="SimulacaoView" Property="SeriesSimuladas" Title="Séries" Width="100px" TextAlign="TextAlign.Right">
+                        <Template Context="j">@(j.SeriesSimuladas?.ToString("N0") ?? "—")</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="SimulacaoView" Title="Detalhe">
+                        <Template Context="j">
+                            @if (j.Status == "Falha")
+                            {
+                                <small style="color: var(--rz-danger)">@j.MensagemErro</small>
+                            }
+                            else if (j.Status == "Concluido")
+                            {
+                                <RadzenButton Text="Ver resultado" Icon="bar_chart" Size="ButtonSize.Small"
+                                              ButtonStyle="ButtonStyle.Light" Click="@(() => OnSelect(j))" />
+                            }
+                        </Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
+        </RadzenStack>
+    </RadzenCard>
+
+    @if (_selected is { Status: "Concluido" } && PurchasingApiClient.ParseResultado(_selected.ResultadoJson) is { } so)
+    {
+        var r = so.Resultado;
+        var politicas = r.Politicas;
+        var classico = politicas.FirstOrDefault(p => p.Policy == "emax-eseg");
+        var ml = politicas.FirstOrDefault(p => p.Policy == "forecast-rop");
+
+        <RadzenCard Variant="Variant.Outlined">
+            <RadzenStack Gap="1rem">
+                <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+                    <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Comparativo global das políticas</RadzenText>
+                    <HelpTip Text="@TipComparativo" />
+                    @if (classico is not null && ml is not null)
+                    {
+                        var melhorCusto = ml.Global.CustoTotal < classico.Global.CustoTotal ? "forecast-rop" : "emax-eseg";
+                        <RadzenBadge Text="@($"melhor custo: {melhorCusto}")" BadgeStyle="BadgeStyle.Success" IsPill="true" />
+                    }
+                </RadzenStack>
+                <RadzenText TextStyle="TextStyle.Caption" Style="margin: 0; color: var(--rz-text-secondary-color)">
+                    Janela @r.DataInicio.ToString("dd/MM/yyyy") → @r.DataFim.ToString("dd/MM/yyyy")
+                    · @r.SeriesAvaliadas SKU×loja · LT @r.LeadTimeDias d · ciclo @r.CicloDias d · z @r.FatorServico.ToString("F2")
+                </RadzenText>
+
+                <RadzenDataGrid TItem="PolicySimulationResultView" Data="@politicas" AllowPaging="false" Density="Density.Compact">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Property="Policy" Title="Política">
+                            <Template Context="p">
+                                <strong>@LabelPolitica(p.Policy)</strong>
+                                @if (_policyTips.TryGetValue(p.Policy, out var t))
+                                {
+                                    <HelpTip Text="@t" Size="0.85rem" />
+                                }
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Title="Nível de serviço (unid.)" Width="180px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>NS (unid.)</span><HelpTip Text="@TipNsUnid" Size="0.85rem" /></HeaderTemplate>
+                            <Template Context="p">@p.Global.NivelServicoUnidades.ToString("P1")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Title="NS (dias)" Width="120px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>NS (dias)</span><HelpTip Text="@TipNsDias" Size="0.85rem" /></HeaderTemplate>
+                            <Template Context="p">@p.Global.NivelServicoDias.ToString("P1")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Title="Venda perdida" Width="140px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>Venda perdida</span><HelpTip Text="@TipPerdida" Size="0.85rem" /></HeaderTemplate>
+                            <Template Context="p">@p.Global.VendaPerdida.ToString("N0")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Title="Cobertura (d)" Width="140px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>Cobertura</span><HelpTip Text="@TipCobertura" Size="0.85rem" /></HeaderTemplate>
+                            <Template Context="p">@p.Global.CoberturaMediaDias.ToString("F1")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Title="Giro" Width="100px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>Giro</span><HelpTip Text="@TipGiro" Size="0.85rem" /></HeaderTemplate>
+                            <Template Context="p">@p.Global.Giro.ToString("F2")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Title="Pedidos" Width="100px" TextAlign="TextAlign.Right">
+                            <Template Context="p">@p.Global.Pedidos.ToString("N0")</Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="PolicySimulationResultView" Title="Custo total" Width="140px" TextAlign="TextAlign.Right">
+                            <HeaderTemplate><span>Custo total</span><HelpTip Text="@TipCustoTotal" Size="0.85rem" /></HeaderTemplate>
+                            <Template Context="p">@p.Global.CustoTotal.ToString("N2")</Template>
+                        </RadzenDataGridColumn>
+                    </Columns>
+                </RadzenDataGrid>
+            </RadzenStack>
+        </RadzenCard>
+
+        <RadzenCard Variant="Variant.Outlined">
+            <RadzenStack Gap="1rem">
+                <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem">
+                    <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Drill-down por hierarquia</RadzenText>
+                    <HelpTip Text="@TipDrill" />
+                </RadzenStack>
+
+                <RadzenTabs RenderMode="TabRenderMode.Client">
+                    <Tabs>
+                        @foreach (var dim in _dimensions)
+                        {
+                            var rows = BuildDrillRows(politicas, dim);
+                            <RadzenTabsItem Text="@($"{dim} ({rows.Count})")">
+                                @if (rows.Count == 0)
+                                {
+                                    <RadzenText TextStyle="TextStyle.Body2" Style="color: var(--rz-text-secondary-color)">
+                                        Sem dados nesta dimensão.
+                                    </RadzenText>
+                                }
+                                else
+                                {
+                                    <RadzenDataGrid TItem="DrillRow" Data="@rows" AllowPaging="true" PageSize="10" AllowSorting="true" Density="Density.Compact">
+                                        <Columns>
+                                            <RadzenDataGridColumn TItem="DrillRow" Property="Chave" Title="@dim" />
+                                            <RadzenDataGridColumn TItem="DrillRow" Property="Dias" Title="dias-série" Width="120px" TextAlign="TextAlign.Right">
+                                                <Template Context="row">@row.Dias.ToString("N0")</Template>
+                                            </RadzenDataGridColumn>
+                                            @foreach (var pol in politicas.Select(p => p.Policy))
+                                            {
+                                                var label = LabelPolitica(pol);
+                                                <RadzenDataGridColumn TItem="DrillRow" Title="@($"NS {label}")" Width="140px" TextAlign="TextAlign.Right" Sortable="false">
+                                                    <Template Context="row">
+                                                        @(row.NsByPolicy.TryGetValue(pol, out var n) ? n.ToString("P1") : "—")
+                                                    </Template>
+                                                </RadzenDataGridColumn>
+                                                <RadzenDataGridColumn TItem="DrillRow" Title="@($"Custo {label}")" Width="140px" TextAlign="TextAlign.Right" Sortable="false">
+                                                    <Template Context="row">
+                                                        @(row.CustoByPolicy.TryGetValue(pol, out var c) ? c.ToString("N2") : "—")
+                                                    </Template>
+                                                </RadzenDataGridColumn>
+                                            }
+                                            <RadzenDataGridColumn TItem="DrillRow" Property="VencedorCusto" Title="Vencedor (custo)" Width="170px">
+                                                <Template Context="row">
+                                                    <RadzenBadge Text="@LabelPolitica(row.VencedorCusto)"
+                                                                 BadgeStyle="@(row.VencedorCusto == ForecastPolicyName ? BadgeStyle.Success : BadgeStyle.Secondary)"
+                                                                 Shade="Shade.Lighter" />
+                                                </Template>
+                                            </RadzenDataGridColumn>
+                                        </Columns>
+                                    </RadzenDataGrid>
+                                }
+                            </RadzenTabsItem>
+                        }
+                    </Tabs>
+                </RadzenTabs>
+            </RadzenStack>
+        </RadzenCard>
+    }
+</RadzenStack>
+
+@code {
+    private const string ClassicPolicyName = "emax-eseg";
+    private const string ForecastPolicyName = "forecast-rop";
+    private static readonly string[] _dimensions = ["Categoria", "ClasseAbc", "Loja", "UF"];
+
+    private const string TipPagina =
+        "Replay de compras: para cada SKU×loja, simulamos dia-a-dia o que aconteceria sob duas políticas " +
+        "— eMax/eSeg clássico (média histórica × LT) e ROP+forecast (LightGBM acumulado + safety por resíduo). " +
+        "Comparação justa: mesmo estoque inicial, mesma demanda real, mesma janela.";
+    private const string TipFator =
+        "Fator z (quantil da Normal) — controla o safety stock. 1.65 ≈ 95% de nível de serviço (alvo conservador clássico de farma); " +
+        "1.28 ≈ 90%; 2.05 ≈ 98%. Maior = mais segurança, mais estoque parado.";
+    private const string TipComparativo =
+        "KPIs agregados de cada política em toda a janela. Nível de serviço alto + custo total baixo = sucesso. " +
+        "Custo total = α × Σ estoque-dia + β × venda perdida (parâmetros documentados em SimulationOptions).";
+    private const string TipNsUnid =
+        "Fill rate — fração da demanda total atendida em unidades (1 − venda perdida / demanda). " +
+        "É o KPI tradicional de serviço; pondera SKUs de alto giro.";
+    private const string TipNsDias =
+        "Cycle service level — fração de dia-SKU-loja sem ruptura (1 − dias com ruptura / dias totais). " +
+        "Insensível ao volume — útil pra detectar ruptura crônica em itens de baixo giro.";
+    private const string TipPerdida =
+        "Unidades de demanda real que não foram atendidas (estoque insuficiente). É o que vira queixa do cliente e perda de venda.";
+    private const string TipCobertura =
+        "Dias de cobertura média = estoque médio / demanda diária média. " +
+        "Reflete quanto capital fica parado em estoque — quanto menor, melhor (sem ruptura).";
+    private const string TipGiro =
+        "Giro (turnover) = demanda no período / estoque médio. Mais giro = capital trabalha mais.";
+    private const string TipCustoTotal =
+        "Custo total = custo de carregamento (α × Σ estoque-dia) + custo de ruptura (β × unidades perdidas). " +
+        "α e β são parâmetros simplificados (POC) — em produção viriam do financeiro.";
+    private const string TipDrill =
+        "Cruza a comparação por dimensão (categoria, ABC, loja, UF) — para confirmar que o ganho do ML é consistente, " +
+        "não apenas média global. Linhas onde forecast-rop tem custo menor vencem.";
+
+    private static readonly IReadOnlyDictionary<string, string> _policyTips =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ClassicPolicyName] =
+                "Política clássica do varejo farma. Calcula eMax/eSeg a partir da média e desvio histórico de vendas dos últimos 28 dias " +
+                "do SKU×loja, com safety = z·σ·√LT. Não enxerga sazonalidade, promoção futura ou feriado.",
+            [ForecastPolicyName] =
+                "Política baseada em forecast. Usa a soma das previsões LightGBM para os próximos LT+ciclo dias como demanda esperada " +
+                "e o desvio dos resíduos do modelo como σ. Capta dia-da-semana, promoção, calendário etc.",
+        };
+
+    private static string LabelPolitica(string p) => p switch
+    {
+        ClassicPolicyName => "eMax/eSeg",
+        ForecastPolicyName => "ROP+forecast",
+        _ => p,
+    };
+
+    private sealed record TreinoOpt(Guid Id, string Label);
+    public sealed record DrillRow(
+        string Chave,
+        int Dias,
+        IReadOnlyDictionary<string, double> NsByPolicy,
+        IReadOnlyDictionary<string, decimal> CustoByPolicy,
+        string VencedorCusto);
+
+    private List<TreinoOpt> _treinosConcluidos = [];
+    private Guid _treinoJobId;
+    private int _janelaDias = 60;
+    private int _leadTime = 7;
+    private int _ciclo = 7;
+    private double _fatorServico = 1.65;
+
+    private bool _enqueuing;
+    private bool _loading;
+    private List<SimulacaoView> _jobs = [];
+    private SimulacaoView? _selected;
+    private Timer? _timer;
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTreinosAsync();
+        await RefreshAsync();
+        _timer = new Timer(async _ => await InvokeAsync(RefreshAsync), null,
+            TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    private async Task LoadTreinosAsync()
+    {
+        try
+        {
+            var jobs = await TrainingApi.ListAsync(50, _cts.Token);
+            _treinosConcluidos = jobs
+                .Where(j => j.Status == "Concluido")
+                .Select(j => new TreinoOpt(j.Id, $"{j.DataAgendamento.ToLocalTime():dd/MM HH:mm} · {j.MaxSkus} SKUs · {j.Id.ToString()[..8]}"))
+                .ToList();
+            if (_treinoJobId == Guid.Empty && _treinosConcluidos.Count > 0)
+                _treinoJobId = _treinosConcluidos[0].Id;
+        }
+        catch { /* POC: silencia */ }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_loading) return;
+        _loading = true;
+        try
+        {
+            _jobs = [.. await PurchasingApi.ListAsync(50, _cts.Token)];
+        }
+        catch (OperationCanceledException) { }
+        catch { /* POC: silencia polling */ }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnSelect(SimulacaoView j)
+    {
+        _selected = j.Status == "Concluido" && j.ResultadoJson is null
+            ? await PurchasingApi.GetAsync(j.Id, _cts.Token) ?? j
+            : j;
+    }
+
+    private async Task Simular()
+    {
+        if (_treinoJobId == Guid.Empty) return;
+        _enqueuing = true;
+        try
+        {
+            var job = await PurchasingApi.EnqueueAsync(new EnqueueSimulationRequest(
+                _treinoJobId, _janelaDias, _leadTime, _ciclo, _fatorServico), _cts.Token);
+            if (job is not null)
+            {
+                Notifications.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Success,
+                    Summary = "Simulação enfileirada",
+                    Detail = $"Janela {_janelaDias}d · LT {_leadTime}d · ciclo {_ciclo}d · z {_fatorServico:F2}.",
+                    Duration = 5000,
+                });
+                await RefreshAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Notifications.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error, Summary = "Falha ao enfileirar", Detail = ex.Message, Duration = 8000,
+            });
+        }
+        finally { _enqueuing = false; }
+    }
+
+    private static BadgeStyle BadgeFor(string status) => status switch
+    {
+        "Pendente" => BadgeStyle.Secondary,
+        "Processando" => BadgeStyle.Info,
+        "Concluido" => BadgeStyle.Success,
+        "Falha" => BadgeStyle.Danger,
+        _ => BadgeStyle.Light,
+    };
+
+    /// <summary>
+    /// Pivota o KPI por dimensão: cada chave (ex.: "OTC", "A", "1", "SP") vira uma
+    /// linha com NS e custo de cada política, e o vencedor por custo total.
+    /// </summary>
+    private static IReadOnlyList<DrillRow> BuildDrillRows(IReadOnlyList<PolicySimulationResultView> politicas, string dim)
+    {
+        var keys = politicas
+            .SelectMany(p => p.PorDimensao is null ? [] :
+                p.PorDimensao.TryGetValue(dim, out var d) ? d.Keys : (IEnumerable<string>)[])
+            .Distinct()
+            .ToList();
+
+        var rows = new List<DrillRow>(keys.Count);
+        foreach (var key in keys)
+        {
+            var ns = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            var custo = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+            int dias = 0;
+            string venc = "";
+            decimal menorCusto = decimal.MaxValue;
+            foreach (var p in politicas)
+            {
+                if (p.PorDimensao is null) continue;
+                if (!p.PorDimensao.TryGetValue(dim, out var byKey)) continue;
+                if (!byKey.TryGetValue(key, out var k)) continue;
+                ns[p.Policy] = k.NivelServicoUnidades;
+                custo[p.Policy] = k.CustoTotal;
+                if (k.DiasTotais > dias) dias = k.DiasTotais;
+                if (k.CustoTotal < menorCusto) { menorCusto = k.CustoTotal; venc = p.Policy; }
+            }
+            rows.Add(new DrillRow(key, dias, ns, custo, venc));
+        }
+        return rows.OrderByDescending(r => r.Dias).ThenBy(r => r.Chave, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

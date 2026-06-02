@@ -13,6 +13,7 @@
     <ProjectReference Include="..\CosmosPro.ML.DemandForCast.Engine\CosmosPro.ML.DemandForCast.Engine.csproj" />
     <ProjectReference Include="..\CosmosPro.ML.DemandForCast.Features\CosmosPro.ML.DemandForCast.Features.csproj" />
     <ProjectReference Include="..\CosmosPro.ML.DemandForCast.Forecasting\CosmosPro.ML.DemandForCast.Forecasting.csproj" />
+    <ProjectReference Include="..\CosmosPro.ML.DemandForCast.Purchasing\CosmosPro.ML.DemandForCast.Purchasing.csproj" />
   </ItemGroup>
 
   <ItemGroup>
