@@ -13,7 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.ClickHouse.Driver" Version="13.1.2" />
+    <PackageReference Include="Aspire.ClickHouse.Driver" Version="13.3.5" />
   </ItemGroup>
 
   <ItemGroup>

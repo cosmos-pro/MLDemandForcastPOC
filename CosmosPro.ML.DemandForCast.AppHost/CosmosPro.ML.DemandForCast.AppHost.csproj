@@ -1,4 +1,4 @@
-<Project Sdk="Aspire.AppHost.Sdk/13.3.1">
+<Project Sdk="Aspire.AppHost.Sdk/13.4.3">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,12 +9,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting.SqlServer" Version="13.3.1" />
-    <PackageReference Include="Aspire.Hosting.ClickHouse" Version="13.1.2" />
+    <PackageReference Include="Aspire.Hosting.SqlServer" Version="13.4.3" />
+    <PackageReference Include="Aspire.Hosting.ClickHouse" Version="13.3.5" />
     <PackageReference Include="CommunityToolkit.Aspire.Hosting.SqlDatabaseProjects" Version="13.1.1" />
     <PackageReference Include="CommunityToolkit.Aspire.Hosting.SqlServer.Extensions" Version="13.1.1" />
     <PackageReference Include="CommunityToolkit.Aspire.Hosting.Minio" Version="13.3.0" />
-    <PackageReference Include="Aspire.Hosting.EntityFrameworkCore" Version="13.3.4-preview.1.26268.8" />
+    <PackageReference Include="Aspire.Hosting.EntityFrameworkCore" Version="13.4.3-preview.1.26305.13" />
   </ItemGroup>
 
   <ItemGroup>

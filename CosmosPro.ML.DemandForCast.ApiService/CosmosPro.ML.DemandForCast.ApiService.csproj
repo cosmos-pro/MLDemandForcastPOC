@@ -18,8 +18,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.1" />
-    <PackageReference Include="Aspire.Microsoft.EntityFrameworkCore.SqlServer" Version="13.3.4" />
-    <PackageReference Include="Aspire.Microsoft.Data.SqlClient" Version="13.3.4" />
+    <PackageReference Include="Aspire.Microsoft.EntityFrameworkCore.SqlServer" Version="13.4.3" />
+    <PackageReference Include="Aspire.Microsoft.Data.SqlClient" Version="13.4.3" />
     <PackageReference Include="CommunityToolkit.Aspire.Minio.Client" Version="13.3.0" />
     <!-- Necessário para Aspire.Hosting.EntityFrameworkCore.AddEFMigrations executar
          `dotnet ef database update` em runtime contra este startup project. -->
