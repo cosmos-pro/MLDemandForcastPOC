@@ -38,6 +38,90 @@ Um forecast com WAPE 29% é interessante. Um forecast que **derruba a venda perd
 
 ---
 
+## Não estamos prevendo o futuro — estamos refazendo o passado {#como-sabemos-quem-venceu}
+
+> **A dúvida mais comum:** "Se a sugestão de compra é uma *previsão*, no momento em que ela é feita ainda não sabemos se vai dar certo. Então como o sistema decide qual política 'venceu'?"
+
+A resposta dissolve a confusão: **a simulação de F8 não prevê o futuro — ela refaz o passado.** É um *replay contrafactual* (um "e se?") sobre uma janela histórica **que já aconteceu**.
+
+### O truque: o passado tem gabarito
+
+Para os últimos N dias (default 60), o Stage **já sabe a verdade de campo**, dia a dia, por SKU×loja:
+
+- quanto **realmente vendeu** (a demanda observada);
+- se houve **ruptura** (e o estoque de cada dia);
+- preço, promoção, etc.
+
+Isso **não é previsão** — é o registro do que aconteceu. A "prova" e o "gabarito" estão ambos na mão.
+
+### O que a simulação faz
+
+Pega cada dia D da janela e pergunta: *"Se eu tivesse usado a política X naquele dia, sem saber o que viria pela frente, o que teria acontecido?"*
+
+```
+Para cada (SKU, loja, dia D), com cada política:
+  1. Recebe os pedidos que chegariam hoje (lançados em D − lead time)
+  2. Demanda real do dia D  ←  VEM DO STAGE (já é conhecida)
+  3. Vende = mínimo(estoque, demanda real)
+       → se demanda > estoque, o excedente é VENDA PERDIDA
+  4. A política decide quanto pedir, enxergando APENAS o que conheceria em D:
+       • histórico de vendas até D − 1
+       • forecast do LightGBM para D+1 … D+LT+ciclo
+         (que internamente só usa dados até D − lead time — o anti-leakage de F5)
+       • estoque atual + pedidos em trânsito
+  5. Lança o pedido → ele chegará em D + lead time
+```
+
+**O passo 4 é o que torna tudo honesto:** no dia D, nenhuma política — nem a clássica, nem a de ML — enxerga o "futuro real". É exatamente como teria sido em produção naquele dia. A previsão existe, mas é feita *às cegas* quanto ao que ainda não aconteceu.
+
+### Por que isso responde "quem venceu"
+
+Como conhecemos a **venda real**, ao fim dos N dias medimos, para cada política, contra o gabarito:
+
+| Pergunta | KPI |
+|---|---|
+| Quanto da demanda **que de fato existiu** a política conseguiu atender? | Nível de serviço (unidades) |
+| Em quantos dias **faltou** produto? | Nível de serviço (dias) |
+| Quantas unidades de demanda real **ficaram sem atendimento**? | Venda perdida |
+| Quanto capital **ficou parado** em estoque? | Cobertura / giro |
+| Somando tudo, qual saiu **mais barata**? | Custo total |
+
+"Venceu" = teve o melhor KPI segundo um critério fixo (no nosso caso, **custo total**). É uma medição **contra a realidade conhecida** — não contra outra previsão, nem contra um palpite sobre o futuro.
+
+```mermaid
+flowchart LR
+    subgraph V["Verdade conhecida (Stage)"]
+        H["Vendas reais<br/>dia a dia"]
+    end
+    subgraph A["Política eMax/eSeg"]
+        A1["Olha só o histórico<br/>até D−1"] --> A2["Decide pedido em D"]
+    end
+    subgraph B["Política ROP+forecast"]
+        B1["Histórico + forecast<br/>(respeitando lead time)"] --> B2["Decide pedido em D"]
+    end
+    A2 --> SA["Estoque simulado A"]
+    B2 --> SB["Estoque simulado B"]
+    H -.->|"atende<br/>ou rompe"| SA
+    H -.->|"atende<br/>ou rompe"| SB
+    SA --> KA["KPIs A"]
+    SB --> KB["KPIs B"]
+    KA & KB --> J["Quem cobriu mais da<br/>demanda real, a menor custo?"]
+    style H fill:#fea
+    style J fill:#dfd
+```
+
+### A analogia que fecha a ideia
+
+É como **dois técnicos de futebol reassistindo a um jogo que já terminou**, cada um anotando "eu teria escalado assim". Como o placar real é conhecido, dá para julgar qual escalação teria ido melhor — sem nenhum deles ter visto o resultado *antes* de decidir. F8 faz isso com 60 dias de compras, SKU por SKU.
+
+O nome técnico é **backtest de política de inventário** (Silver/Pyke/Thomas; Law), o irmão do walk-forward de [F7](04-avaliacao-metricas.md#walk-forward): lá medimos a previsão pontual contra a venda real; aqui medimos a **decisão de compra** contra a venda real.
+
+### O caveat honesto (precisa ir no TCC)
+
+A "demanda real" é **observada pela venda**. Em dias de **ruptura**, a venda subestima a demanda (a pessoa quis comprar e não tinha). Nossa heurística — substituir esses dias pela média histórica não-ruptura do SKU×loja — é pragmática mas tem viés; ver [demanda real na ruptura](#demanda-real). Em produção, *censored demand estimation* (Nahmias, 1994) refina isso. É uma limitação a declarar, não a esconder.
+
+---
+
 ## Os ingredientes
 
 ### 1. Política eMax/eSeg clássica {#emax-eseg}
