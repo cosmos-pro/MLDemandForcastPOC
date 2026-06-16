@@ -180,6 +180,66 @@ public sealed class PurchasingSimulatorTests
         r.Politicas[0].Global.Should().BeEquivalentTo(r.Politicas[1].Global);
     }
 
+    [Fact]
+    public void Livro_de_pedidos_registra_cada_pedido_lancado()
+    {
+        var obs = SeriesConstante(dias: 30, qty: 0m);
+        var key = new PurchasingSimulator.SerieKey("SKU1", 1);
+        var estoqueInicial = new Dictionary<PurchasingSimulator.SerieKey, decimal> { [key] = 0 };
+        var atributos = new Dictionary<PurchasingSimulator.SerieKey, PurchasingSimulator.SerieAttributes>
+        {
+            [key] = new("SKU1", 1, "Cat", "A", "SP", "Sudeste"),
+        };
+        var policy = new AlwaysOrder100OnceThenStopPolicy();
+        var options = new SimulationOptions
+        {
+            DataInicio = Origem.AddDays(7), DataFim = Origem.AddDays(20),
+            LeadTimeDias = 7, CicloDias = 7, FatorServico = 0,
+        };
+
+        var r = new PurchasingSimulator().Run(options, obs, estoqueInicial, atributos, [policy]);
+        var pedidos = r.Politicas[0].Pedidos;
+
+        pedidos.Should().HaveCount(1);
+        pedidos[0].Sku.Should().Be("SKU1");
+        pedidos[0].Quantidade.Should().Be(100);
+        pedidos[0].Data.Should().Be(options.DataInicio); // pediu no 1º dia
+        r.Politicas[0].Global.Pedidos.Should().Be(1); // KPI bate com o livro
+    }
+
+    [Fact]
+    public void Snapshot_do_ultimo_dia_tem_uma_linha_por_serie_com_decisao()
+    {
+        // 2 séries, demanda alta o suficiente pra esvaziar e disparar pedido no fim.
+        var obs = SeriesConstante(30, 10m);
+        obs.AddRange(SeriesConstante(30, 10m).Select(o => o with { Sku = "SKU2" }));
+        var keys = new[]
+        {
+            new PurchasingSimulator.SerieKey("SKU1", 1),
+            new PurchasingSimulator.SerieKey("SKU2", 1),
+        };
+        var estoqueInicial = keys.ToDictionary(k => k, _ => 5m); // pouco estoque → vai pedir
+        var atributos = new Dictionary<PurchasingSimulator.SerieKey, PurchasingSimulator.SerieAttributes>
+        {
+            [keys[0]] = new("SKU1", 1, "Cat", "A", "SP", "Sudeste"),
+            [keys[1]] = new("SKU2", 1, "Cat", "A", "SP", "Sudeste"),
+        };
+        var options = new SimulationOptions
+        {
+            DataInicio = Origem.AddDays(7), DataFim = Origem.AddDays(20),
+            LeadTimeDias = 7, CicloDias = 7, FatorServico = 1.65,
+        };
+
+        var r = new PurchasingSimulator().Run(options, obs, estoqueInicial, atributos, [new EMaxESegPolicy()]);
+        var snap = r.Politicas[0].ListaCompraFinal;
+
+        // Uma linha por série, com S >= s e qtd sugerida = max(0, S - posição) quando dispara.
+        snap.Should().HaveCount(2);
+        snap.Should().OnlyContain(i => i.OrderUpToLevel >= i.ReorderPoint);
+        snap.Should().Contain(i => i.Sku == "SKU1");
+        snap.Should().Contain(i => i.Sku == "SKU2");
+    }
+
     private sealed class NeverOrderPolicy : IPurchasingPolicy
     {
         public string Name => "never";

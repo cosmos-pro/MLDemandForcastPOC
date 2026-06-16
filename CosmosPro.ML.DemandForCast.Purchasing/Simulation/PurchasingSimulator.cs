@@ -103,8 +103,13 @@ public sealed class PurchasingSimulator
             perSerie[key] = new SerieAccumulator(Math.Max(0, inv));
         }
 
+        // Livro de pedidos (auditoria) e foto do último dia (lista de compra acionável).
+        var pedidos = new List<OrderRecord>();
+        var snapshot = new List<BuyListItem>(bySerie.Count);
+
         for (var d = options.DataInicio; d <= options.DataFim; d = d.AddDays(1))
         {
+            var ultimoDia = d == options.DataFim;
             foreach (var (key, serie) in bySerie)
             {
                 var acc = perSerie[key];
@@ -130,15 +135,23 @@ public sealed class PurchasingSimulator
                 var ctx = BuildContext(options, key, d, serie, acc, forecaster);
                 var p = policy.Compute(ctx);
                 var posicao = ctx.EstoqueAtual + ctx.EmTransito;
-                if (posicao <= p.ReorderPoint)
+                var qtySugerida = posicao <= p.ReorderPoint ? Math.Max(0, p.OrderUpToLevel - posicao) : 0m;
+
+                if (qtySugerida > 0)
                 {
-                    var qty = p.OrderUpToLevel - posicao;
-                    if (qty > 0)
-                    {
-                        acc.LancarPedido(d.AddDays(options.LeadTimeDias), qty);
-                        acc.Pedidos++;
-                        acc.UnidadesPedidas += qty;
-                    }
+                    acc.LancarPedido(d.AddDays(options.LeadTimeDias), qtySugerida);
+                    acc.Pedidos++;
+                    acc.UnidadesPedidas += qtySugerida;
+                    pedidos.Add(new OrderRecord(d, key.Sku, key.LojaId, qtySugerida, posicao, p.ReorderPoint, p.OrderUpToLevel));
+                }
+
+                // Foto do último dia: a decisão (s, S, qtd) de cada SKU×loja "hoje".
+                if (ultimoDia)
+                {
+                    snapshot.Add(new BuyListItem(
+                        key.Sku, key.LojaId,
+                        ctx.EstoqueAtual, ctx.EmTransito, posicao,
+                        p.ReorderPoint, p.OrderUpToLevel, qtySugerida));
                 }
             }
         }
@@ -147,7 +160,7 @@ public sealed class PurchasingSimulator
         var globalKpi = AggregateKpis(perSerie.Values, options);
         var porDim = AggregatePorDimensao(perSerie, atributos, options);
 
-        return new PolicySimulationResult(policy.Name, globalKpi, porDim);
+        return new PolicySimulationResult(policy.Name, globalKpi, porDim, snapshot, pedidos);
     }
 
     private static PolicyContext BuildContext(

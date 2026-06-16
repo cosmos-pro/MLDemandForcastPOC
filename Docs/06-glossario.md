@@ -88,6 +88,12 @@ Quando o modelo recebe no treino informação que **só existiria no futuro** em
 ### LightGBM
 Implementação eficiente de gradient boosted decision trees pela Microsoft Research. Vencedora de muitas competições Kaggle / M5 em forecasting de varejo. Nosso engine principal. → [03 — Engines](03-engines-previsao.md#lightgbm)
 
+### Lista de compra
+O artefato acionável da política de reposição: os itens (SKU × loja) que ela mandaria pedir, com quantidade. Na UI, "Sugestão de hoje" é a foto do último dia simulado; "Livro de pedidos" é o histórico de todos os pedidos da janela. É a tradução dos KPIs agregados para a linguagem do comprador. → [07 — Sugestão de compra](07-sugestao-compra.md#lista-de-compra)
+
+### Livro de pedidos
+Registro de auditoria de todos os pedidos que uma política lançou durante a simulação (data, SKU, loja, posição, s, S, quantidade). Permite reconstruir *quando* e *por que* cada pedido foi disparado. → [07 — Sugestão de compra](07-sugestao-compra.md#lista-de-compra)
+
 ### MAE — Mean Absolute Error
 Média dos erros absolutos. Unidade igual à venda. Não comparável entre SKUs de volumes diferentes. → [04 — Avaliação](04-avaliacao-metricas.md#metricas)
 

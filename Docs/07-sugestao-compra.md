@@ -259,7 +259,46 @@ Definidos em [SimulationResult.cs](../CosmosPro.ML.DemandForCast.Purchasing/Simu
 
 ### Tela: comparativo
 
-A página `/sugestao-compra` consolida tudo em duas partes — cabeçalho com KPIs globais por política e drill-down por hierarquia. Drill-down marca em verde a célula vencedora por custo total — é o "mapa de calor" da decisão.
+A página `/sugestao-compra` consolida tudo em três blocos: KPIs globais por política, drill-down por hierarquia e a **lista de compra** (próxima seção). O drill-down marca em verde a célula vencedora por custo total — o "mapa de calor" da decisão.
+
+---
+
+### 5. Visão de varejo: a lista de compra {#lista-de-compra}
+
+KPIs agregados respondem *"qual política é melhor no todo?"*. Mas o comprador de farma trabalha com outra pergunta, concreta: **"quais itens eu peço, e quanto, hoje?"**. F8 também produz esse artefato.
+
+#### Por que isso importa
+
+O número agregado ("ML teve 77% de nível de serviço") é abstrato para quem opera. O que o comprador reconhece é a **lista de reposição**: SKU, loja, quantidade. Expor isso (a) torna a comparação tangível — dá pra ver *item a item* onde as duas políticas divergem — e (b) é o formato que viraria, em produção, um **pedido ao fornecedor**.
+
+#### Dois recortes
+
+| Aba | O que mostra | Pergunta que responde |
+|---|---|---|
+| **Sugestão de hoje** | Foto do **último dia** da janela: para cada SKU×loja, a posição de estoque e a quantidade que cada política mandaria pedir. | "Se eu abrisse a tela de compras hoje, o que pediria?" |
+| **Livro de pedidos** | Todos os pedidos que a política lançou ao longo da janela (data, SKU, loja, posição, s, S, quantidade). | "Que decisões a política tomou, e quando?" (auditoria) |
+
+#### Como a "sugestão de hoje" é calculada
+
+É a mesma decisão `(s, S)` de qualquer dia (ver [política eMax/eSeg](#emax-eseg) e [ROP+forecast](#rop-forecast)), capturada no **último dia simulado**:
+
+$$
+\text{quantidade a pedir} = \begin{cases} S - \text{posição} & \text{se posição} \le s \\ 0 & \text{caso contrário} \end{cases}
+$$
+
+onde posição = estoque físico + em trânsito. A lista mostra as duas políticas **lado a lado** na mesma linha, mais a coluna **Δ (ML − clássico)** — exatamente onde mora a tese: *"para este item, a regra clássica mandaria comprar 128 e o ML só 86"*.
+
+#### O que ler na divergência
+
+- **Δ negativo** (ML pede menos): o forecast "confia" que a demanda futura é menor que a média histórica sugere — tipicamente fora de pico sazonal, ou quando o histórico recente foi inflado por um evento pontual. Menos capital parado **se** o forecast acertar.
+- **Δ positivo** (ML pede mais): o forecast antecipa alta (fim de semana, promoção agendada, sazonalidade) que a média não captura. Protege contra ruptura **se** o forecast acertar.
+- **Δ zero / um pede e o outro não**: itens onde as políticas concordam ou divergem no gatilho — os mais interessantes para inspeção manual.
+
+> **Importante:** a lista de compra é o *output* da decisão, não a prova de que ela acertou. Quem acertou, sabemos pelos [KPIs medidos contra a venda real](#como-sabemos-quem-venceu) ao fim da janela. A lista mostra *o que cada política faria*; os KPIs mostram *no que isso deu*.
+
+#### Dados
+
+Capturados em [SimulationResult.cs](../CosmosPro.ML.DemandForCast.Purchasing/Simulation/SimulationResult.cs) (`BuyListItem` = snapshot; `OrderRecord` = livro). O nome do produto vem de `Produtos.Nome`, anexado pelo [SimulacaoProcessor](../CosmosPro.ML.DemandForCast.Worker/Purchasing/SimulacaoProcessor.cs) ao envelope de resultado. Granularidade **SKU × loja** — a unidade real da decisão de reposição.
 
 ---
 

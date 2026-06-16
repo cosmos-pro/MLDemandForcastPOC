@@ -67,6 +67,7 @@ public sealed record SimulacaoView(
 public sealed record SimulationOutput(
     DateTimeOffset GeradoEm,
     Guid TreinoJobId,
+    IReadOnlyDictionary<string, string>? Produtos,
     SimulationResultView Resultado);
 
 public sealed record SimulationResultView(
@@ -81,7 +82,28 @@ public sealed record SimulationResultView(
 public sealed record PolicySimulationResultView(
     string Policy,
     PolicyKpisView Global,
-    IReadOnlyDictionary<string, IReadOnlyDictionary<string, PolicyKpisView>>? PorDimensao);
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, PolicyKpisView>>? PorDimensao,
+    IReadOnlyList<BuyListItemView>? ListaCompraFinal,
+    IReadOnlyList<OrderRecordView>? Pedidos);
+
+public sealed record BuyListItemView(
+    string Sku,
+    int LojaId,
+    decimal Estoque,
+    decimal EmTransito,
+    decimal Posicao,
+    decimal ReorderPoint,
+    decimal OrderUpToLevel,
+    decimal QuantidadeSugerida);
+
+public sealed record OrderRecordView(
+    DateOnly Data,
+    string Sku,
+    int LojaId,
+    decimal Quantidade,
+    decimal PosicaoAntes,
+    decimal ReorderPoint,
+    decimal OrderUpToLevel);
 
 public sealed record PolicyKpisView(
     decimal DemandaTotal,

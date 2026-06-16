@@ -11,10 +11,45 @@ public sealed record SimulationResult(
     IReadOnlyList<PolicySimulationResult> Politicas);
 
 /// <summary>KPIs agregados de uma política sobre toda a janela.</summary>
+/// <param name="ListaCompraFinal">
+/// Foto do último dia da janela: a decisão (s, S, qtd sugerida) de cada SKU×loja
+/// como se o comprador abrisse a tela "hoje". É o artefato acionável da política.
+/// </param>
+/// <param name="Pedidos">
+/// Livro de pedidos: todo pedido lançado pela política ao longo da janela
+/// (auditoria). Cardinalidade ≈ <see cref="PolicyKpis.Pedidos"/>.
+/// </param>
 public sealed record PolicySimulationResult(
     string Policy,
     PolicyKpis Global,
-    IReadOnlyDictionary<string, IReadOnlyDictionary<string, PolicyKpis>> PorDimensao);
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, PolicyKpis>> PorDimensao,
+    IReadOnlyList<BuyListItem> ListaCompraFinal,
+    IReadOnlyList<OrderRecord> Pedidos);
+
+/// <summary>
+/// Uma linha da "lista de compra" — a decisão de reposição de um SKU×loja no
+/// último dia simulado. <see cref="QuantidadeSugerida"/> só é &gt; 0 quando a
+/// posição de estoque ficou ≤ <see cref="ReorderPoint"/> (gatilho de pedido).
+/// </summary>
+public sealed record BuyListItem(
+    string Sku,
+    int LojaId,
+    decimal Estoque,
+    decimal EmTransito,
+    decimal Posicao,
+    decimal ReorderPoint,
+    decimal OrderUpToLevel,
+    decimal QuantidadeSugerida);
+
+/// <summary>Um pedido lançado durante o replay (livro de pedidos / auditoria).</summary>
+public sealed record OrderRecord(
+    DateOnly Data,
+    string Sku,
+    int LojaId,
+    decimal Quantidade,
+    decimal PosicaoAntes,
+    decimal ReorderPoint,
+    decimal OrderUpToLevel);
 
 /// <summary>
 /// KPIs de uma política em um agregado (global ou por dimensão).

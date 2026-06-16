@@ -7,6 +7,7 @@ using CosmosPro.ML.DemandForCast.Purchasing;
 using CosmosPro.ML.DemandForCast.Purchasing.Policies;
 using CosmosPro.ML.DemandForCast.Purchasing.Simulation;
 using CosmosPro.ML.DemandForCast.Worker.Training;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Minio;
 using Minio.DataModel.Args;
@@ -101,7 +102,10 @@ internal sealed class SimulacaoProcessor(
         var simulator = new PurchasingSimulator();
         var result = simulator.Run(options, observations, estoqueInicial, atributos, policies, forecaster);
 
-        var output = new SimulationOutput(DateTimeOffset.UtcNow, treino.Id, result);
+        // Nome dos produtos (só dos SKUs simulados) para a lista de compra na UI.
+        var nomes = await LoadNomesAsync(connStr, skus, ct);
+
+        var output = new SimulationOutput(DateTimeOffset.UtcNow, treino.Id, nomes, result);
         var json = JsonSerializer.Serialize(output);
         return new Outcome(json, result.SeriesAvaliadas);
     }
@@ -117,5 +121,29 @@ internal sealed class SimulacaoProcessor(
         ms.Position = 0;
         logger.LogInformation("Modelo {Key} baixado ({Bytes} bytes).", blobKey, ms.Length);
         return LightGbmForecastModel.Load(ms);
+    }
+
+    private static async Task<Dictionary<string, string>> LoadNomesAsync(
+        string connStr, IReadOnlyCollection<string> skus, CancellationToken ct)
+    {
+        var nomes = new Dictionary<string, string>(skus.Count, StringComparer.OrdinalIgnoreCase);
+        if (skus.Count == 0) return nomes;
+
+        await using var conn = new SqlConnection(connStr);
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        var names = new List<string>(skus.Count);
+        int i = 0;
+        foreach (var sku in skus)
+        {
+            var p = $"@s{i++}";
+            names.Add(p);
+            cmd.Parameters.AddWithValue(p, sku);
+        }
+        cmd.CommandText = $"SELECT Sku, Nome FROM dbo.Produtos WHERE Sku IN ({string.Join(", ", names)})";
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            nomes[r.GetString(0)] = r.IsDBNull(1) ? "" : r.GetString(1);
+        return nomes;
     }
 }
