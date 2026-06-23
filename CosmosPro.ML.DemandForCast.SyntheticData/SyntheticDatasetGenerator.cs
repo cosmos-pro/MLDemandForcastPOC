@@ -26,6 +26,7 @@ public static class SyntheticDatasetGenerator
         long Compras,
         int Promocoes,
         int Iqvia,
+        int SinaisExternos,
         TimeSpan Duration);
 
     public static Result Generate(SyntheticDatasetOptions options)
@@ -37,12 +38,13 @@ public static class SyntheticDatasetGenerator
 
         var lojas = MasterData.BuildLojas(options.NumLojas, options.Seed);
         var produtos = MasterData.BuildProdutos(options.NumSkus, options.Seed + 1);
-        var demand = new DemandModel(options.NumSkus, options.NumLojas, options.DataInicio, options.DataFim, options, options.Seed + 2);
+        var ufs = lojas.Select(l => l.UF).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var demand = new DemandModel(options.NumSkus, options.NumLojas, options.DataInicio, options.DataFim, options, options.Seed + 2, ufs);
         var rng = new Random(options.Seed + 3);
 
         var output = new MemoryStream();
         long vendasCount, estoquesCount, comprasCount;
-        int promosCount, iqviaCount;
+        int promosCount, iqviaCount, sinaisCount;
         using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
         {
             WriteLojas(zip, lojas);
@@ -51,12 +53,13 @@ public static class SyntheticDatasetGenerator
             comprasCount = WriteCompras(zip, lojas, produtos, demand, rng);
             promosCount = WritePromocoes(zip, produtos, demand);
             iqviaCount = WriteMercadoIqvia(zip, lojas, produtos, demand, rng);
+            sinaisCount = WriteSinaisExternos(zip, demand, ufs);
             // ZipArchive.Dispose escreve o central directory — ToArray PRECISA vir depois.
         }
         sw.Stop();
         return new Result(
             output.ToArray(),
-            new GenerationStats(lojas.Count, produtos.Count, vendasCount, estoquesCount, comprasCount, promosCount, iqviaCount, sw.Elapsed));
+            new GenerationStats(lojas.Count, produtos.Count, vendasCount, estoquesCount, comprasCount, promosCount, iqviaCount, sinaisCount, sw.Elapsed));
     }
 
     private static StreamWriter OpenCsv(ZipArchive zip, string name)
@@ -134,7 +137,7 @@ public static class SyntheticDatasetGenerator
                     decimal qtd = 0;
                     if (!ruptura)
                     {
-                        qtd = demand.DemandaDia(s, dia);
+                        qtd = demand.DemandaDia(s, dia, lojas[l].UF, produtos[s].Subcategoria);
                         if (qtd > estoqueAtual) qtd = estoqueAtual;
                         estoqueAtual -= qtd;
                     }
@@ -255,22 +258,67 @@ public static class SyntheticDatasetGenerator
         var cur = new DateOnly(demand.Inicio.Year, demand.Inicio.Month, 1);
         while (cur <= demand.Fim) { meses.Add(cur); cur = cur.AddMonths(1); }
 
+        // Princípio → subcategoria (pra saber sensibilidade a gripe e correlacionar a IQVIA).
+        var subcatPorPrincipio = produtos
+            .GroupBy(p => p.PrincipioAtivo)
+            .ToDictionary(g => g.Key, g => g.First().Subcategoria, StringComparer.OrdinalIgnoreCase);
+
         int count = 0;
         foreach (var m in meses)
         {
+            // Gripe média do mês por UF (proxy de mercado: a IQVIA "enxerga" o surto).
+            var diasMes = Enumerable.Range(0, DateTime.DaysInMonth(m.Year, m.Month))
+                .Select(d => m.AddDays(d))
+                .Where(d => d >= demand.Inicio && d <= demand.Fim)
+                .ToList();
+
             foreach (var pa in principios)
             {
+                var subcat = subcatPorPrincipio.GetValueOrDefault(pa);
+                var (sensG, _) = DemandModel.Sensibilidades(subcat);
+
                 foreach (var uf in ufs)
                 {
-                    // Mercado total: 5k a 50k unidades/UF/mês com ruído.
+                    // Mercado total base: 5k a 50k unidades/UF/mês com ruído.
                     var unidades = 5000m + (decimal)(rng.NextDouble() * 45000);
+
+                    // Princípios sensíveis à gripe têm o mercado puxado pelo surto do
+                    // mês — torna a IQVIA um proxy ANTECIPADO (mensal) do sinal de gripe.
+                    if (sensG > 0 && diasMes.Count > 0)
+                    {
+                        var gripeMes = diasMes.Average(d => demand.GripeIndice(uf, d)) / 100.0; // ~0..1.2
+                        unidades *= (decimal)(1.0 + 0.6 * sensG * gripeMes);
+                    }
+
                     // Share da categoria onde nossa rede atua: 5 a 25%.
                     var share = 0.05m + (decimal)(rng.NextDouble() * 0.20);
                     w.WriteLine(new CsvRowBuilder()
-                        .Add(m).Add(pa).Add(uf).Add(unidades).Add(share)
+                        .Add(m).Add(pa).Add(uf).Add(Math.Round(unidades, 3)).Add(share)
                         .Build());
                     count++;
                 }
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Emite os sinais exógenos regionais diários (clima e gripe) por UF — formato
+    /// longo (Data, Geografia, Tipo, Valor), uma linha por (UF × dia × tipo).
+    /// </summary>
+    private static int WriteSinaisExternos(ZipArchive zip, DemandModel demand, List<string> ufs)
+    {
+        using var w = OpenCsv(zip, "sinais_externos.csv");
+        w.WriteLine("Data,Geografia,Tipo,Valor");
+
+        int count = 0;
+        foreach (var uf in ufs)
+        {
+            for (var dia = demand.Inicio; dia <= demand.Fim; dia = dia.AddDays(1))
+            {
+                w.WriteLine(new CsvRowBuilder().Add(dia).Add(uf).Add("Clima").Add((decimal)demand.ClimaTempC(uf, dia)).Build());
+                w.WriteLine(new CsvRowBuilder().Add(dia).Add(uf).Add("Gripe").Add((decimal)demand.GripeIndice(uf, dia)).Build());
+                count += 2;
             }
         }
         return count;

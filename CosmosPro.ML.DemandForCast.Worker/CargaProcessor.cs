@@ -24,6 +24,7 @@ internal sealed class CargaProcessor(
         "Compras",
         "Promocoes",
         "MercadoIqvia",
+        "SinaisExternos",
         "Produtos",
         "Lojas",
     ];
@@ -38,6 +39,8 @@ internal sealed class CargaProcessor(
         ("compras.csv", "Compras"),
         ("promocoes.csv", "Promocoes"),
         ("mercado_iqvia.csv", "MercadoIqvia"),
+        // Opcional (sem FK): ZIPs antigos podem não trazer — BulkInsert pula se ausente.
+        ("sinais_externos.csv", "SinaisExternos"),
     ];
 
     public async Task<long> ProcessAsync(CargaStage carga, CancellationToken ct)
@@ -116,6 +119,13 @@ internal sealed class CargaProcessor(
         SqlConnection conn, SqlTransaction tx, CancellationToken ct)
     {
         var csvPath = Path.Combine(workDir, csvName);
+        // Arquivos opcionais (ex.: sinais_externos.csv) podem não existir em ZIPs
+        // antigos — pula sem erro.
+        if (!File.Exists(csvPath))
+        {
+            logger.LogInformation("{Csv} ausente no ZIP — pulando (tabela {Table} fica vazia).", csvName, table);
+            return 0;
+        }
         var schema = TableSchemas.ByTable[table];
         var dataTable = TableSchemas.BuildEmpty(table);
 

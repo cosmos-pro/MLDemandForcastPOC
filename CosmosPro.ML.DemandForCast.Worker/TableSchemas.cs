@@ -82,6 +82,13 @@ internal static class TableSchemas
             new("DemandaMercadoUnidades", typeof(decimal), false),
             new("MarketShareCategoria", typeof(decimal), true),
         ],
+        ["SinaisExternos"] =
+        [
+            new("Data", typeof(DateTime), false),
+            new("Geografia", typeof(string), false),
+            new("Tipo", typeof(string), false),
+            new("Valor", typeof(decimal), false),
+        ],
     };
 
     public static DataTable BuildEmpty(string table)

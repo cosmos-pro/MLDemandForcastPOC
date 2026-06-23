@@ -16,7 +16,7 @@ public sealed class SyntheticDatasetGeneratorTests
     };
 
     [Fact]
-    public void Generate_produz_ZIP_com_os_7_CSVs_esperados()
+    public void Generate_produz_ZIP_com_os_8_CSVs_esperados()
     {
         var result = SyntheticDatasetGenerator.Generate(SmallOptions);
 
@@ -26,7 +26,7 @@ public sealed class SyntheticDatasetGeneratorTests
         var names = zip.Entries.Select(e => e.Name).ToList();
         names.Should().BeEquivalentTo([
             "lojas.csv", "produtos.csv", "vendas.csv", "estoques_diarios.csv",
-            "compras.csv", "promocoes.csv", "mercado_iqvia.csv"]);
+            "compras.csv", "promocoes.csv", "mercado_iqvia.csv", "sinais_externos.csv"]);
     }
 
     [Fact]
@@ -42,6 +42,7 @@ public sealed class SyntheticDatasetGeneratorTests
         headers["compras.csv"].Should().Be("DataPedido,DataRecebimento,LojaId,Sku,Quantidade,Fornecedor");
         headers["promocoes.csv"].Should().Be("DataInicio,DataFim,Sku,LojaId,Tipo,DescontoPct");
         headers["mercado_iqvia.csv"].Should().Be("Mes,PrincipioAtivo,UF,DemandaMercadoUnidades,MarketShareCategoria");
+        headers["sinais_externos.csv"].Should().Be("Data,Geografia,Tipo,Valor");
     }
 
     [Fact]
@@ -118,6 +119,31 @@ public sealed class SyntheticDatasetGeneratorTests
         result.Stats.Vendas.Should().BeGreaterThan(0);
         result.Stats.Estoques.Should().BeGreaterThan(0);
         result.Stats.Iqvia.Should().BeGreaterThan(0);
+        result.Stats.SinaisExternos.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public void SinaisExternos_tem_clima_e_gripe_e_a_gripe_varia_ao_longo_do_ano()
+    {
+        // Horizonte de 1 ano pra capturar a sazonalidade + anomalia (surto).
+        var opt = SmallOptions with { NumLojas = 3, DataInicio = new DateOnly(2025, 1, 1), DataFim = new DateOnly(2025, 12, 31) };
+        var result = SyntheticDatasetGenerator.Generate(opt);
+
+        var linhas = ReadCsv(result.ZipBytes, "sinais_externos.csv")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Skip(1)
+            .Select(l => l.Split(','))
+            .ToList();
+
+        linhas.Select(p => p[2]).Distinct().Should().BeEquivalentTo(["Clima", "Gripe"]);
+
+        // A gripe deve VARIAR bastante no ano (baixa temporada vs pico/surto) —
+        // é justamente a anomalia que o calendário sozinho não prevê.
+        var gripe = linhas.Where(p => p[2] == "Gripe")
+            .Select(p => decimal.Parse(p[3], System.Globalization.CultureInfo.InvariantCulture))
+            .ToList();
+        var amplitude = gripe.Max() - gripe.Min();
+        amplitude.Should().BeGreaterThan(20m, "o índice de gripe deve oscilar entre baixa temporada e pico de surto");
     }
 
     private static Dictionary<string, string> ReadFirstLineOfEachCsv(byte[] zipBytes)

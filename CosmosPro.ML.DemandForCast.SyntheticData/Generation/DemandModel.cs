@@ -14,7 +14,12 @@ internal sealed class DemandModel
     private readonly double[] _promoLen;
     private readonly bool[] _temPromocao;
 
-    public DemandModel(int numSkus, int numLojas, DateOnly inicio, DateOnly fim, SyntheticDatasetOptions opt, int seed)
+    // Drivers exógenos regionais (por UF, indexados por offset de dia a partir de Inicio).
+    // _gripe ∈ ~[0, 1.2] (0 = baixa temporada, picos = surto); _climaTemp em °C.
+    private readonly Dictionary<string, double[]> _gripe = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, double[]> _climaTemp = new(StringComparer.OrdinalIgnoreCase);
+
+    public DemandModel(int numSkus, int numLojas, DateOnly inicio, DateOnly fim, SyntheticDatasetOptions opt, int seed, IReadOnlyList<string> ufs)
     {
         _rng = new Random(seed);
         NumSkus = numSkus;
@@ -23,6 +28,7 @@ internal sealed class DemandModel
         Fim = fim;
         Options = opt;
         DiasHorizonte = fim.DayNumber - inicio.DayNumber + 1;
+        Ufs = ufs;
 
         // ABC: power-law curve. baseline_i = c * (1/i)^alpha. Alpha = 1.2 dá
         // concentração ABC clássica (~80% volume nos top 20% SKUs); ajustes pra
@@ -51,7 +57,13 @@ internal sealed class DemandModel
             _promoStart[idx] = _rng.Next(DiasHorizonte - 14);
             _promoLen[idx] = _rng.Next(7, 15);
         }
+
+        // Drivers regionais — RNG SEPARADO (não toca o stream de _rng acima, pra
+        // não mudar a seleção de promoções e preservar a determinística existente).
+        BuildDrivers(ufs, new Random(seed + 101));
     }
+
+    public IReadOnlyList<string> Ufs { get; }
 
     public int NumSkus { get; }
     public int NumLojas { get; }
@@ -62,21 +74,170 @@ internal sealed class DemandModel
 
     /// <summary>
     /// Retorna quantidade vendida no dia (≥ 0). Aplica baseline ABC × sazonalidade
-    /// semanal × sazonalidade anual × promo × ruído Poisson. Não considera ruptura
-    /// (chamador faz check antes).
+    /// semanal × sazonalidade anual genérica × <b>drivers exógenos regionais</b>
+    /// (gripe/clima, com sensibilidade por subcategoria) × promo × ruído Poisson.
+    /// Não considera ruptura (chamador faz check antes).
+    ///
+    /// <para>
+    /// O efeito dos drivers inclui a parte sazonal E a <b>anomalia</b> (surto/onda
+    /// de calor) — esta última NÃO é derivável do calendário, e é o que torna o
+    /// sinal exógeno valioso como feature (ver Docs/08).
+    /// </para>
     /// </summary>
-    public int DemandaDia(int skuIndex, DateOnly data)
+    public int DemandaDia(int skuIndex, DateOnly data, string uf, string subcategoria)
     {
         var baseline = _baselineAbc[skuIndex];
         var fatorSemanal = FatorSemanal(data.DayOfWeek);
-        var fatorAnual = FatorAnual(data);
+        var fatorAnual = FatorAnualGenerico(data);
         var fatorPromo = FatorPromocao(skuIndex, data);
+        var fatorSinais = FatorSinais(uf, data, subcategoria);
 
-        var lambda = baseline * fatorSemanal * fatorAnual * fatorPromo;
+        var lambda = baseline * fatorSemanal * fatorAnual * fatorSinais * fatorPromo;
         // Poisson sampling via Knuth (ok pra lambda < ~30; pra valores maiores
         // perde precisão mas o teto natural aqui é ~150 e o erro é aceitável).
         return SamplePoisson(lambda);
     }
+
+    /// <summary>Índice de incidência de gripe (0..~120) na UF no dia — para emissão em SinaisExternos.</summary>
+    public double GripeIndice(string uf, DateOnly data) =>
+        Math.Round(GripeBruto(uf, data) * 100.0, 2);
+
+    /// <summary>Temperatura (°C) na UF no dia — para emissão em SinaisExternos.</summary>
+    public double ClimaTempC(string uf, DateOnly data)
+    {
+        var idx = DiaIdx(data);
+        return _climaTemp.TryGetValue(uf, out var arr) && idx >= 0 && idx < arr.Length
+            ? Math.Round(arr[idx], 1) : 0;
+    }
+
+    /// <summary>
+    /// Sensibilidade de uma subcategoria aos drivers (gripe, calor). Define quais
+    /// famílias de produto reagem — antitérmico/respiratório/antibiótico à gripe;
+    /// antialérgico/vitamina ao calor. Demais ≈ 0.
+    /// </summary>
+    public static (double Gripe, double Calor) Sensibilidades(string? subcategoria) => subcategoria switch
+    {
+        "Respiratório" => (1.4, 0.0),
+        "Antibióticos" => (0.9, 0.0),
+        "Analgésicos" => (0.8, 0.0),      // antitérmico sobe na gripe
+        "Anti-inflamatórios" => (0.6, 0.0),
+        "Antialérgicos" => (0.0, 0.9),    // rinite no tempo seco/quente
+        "Vitaminas" => (0.0, 0.5),
+        "Gástricos" => (0.0, 0.2),
+        _ => (0.0, 0.0),
+    };
+
+    private double FatorSinais(string uf, DateOnly data, string subcategoria)
+    {
+        var (sensG, sensC) = Sensibilidades(subcategoria);
+        if (sensG == 0 && sensC == 0) return 1.0;
+
+        var gripe = GripeBruto(uf, data);          // ~[0, 1.2], baseline de temporada ~0.3
+        var calor = CalorIndice(uf, data);         // [0, 1], normalizado da temperatura
+        // Centrado na temporada/clima "normal" — o ganho vem do desvio (anomalia).
+        var fator = 1.0 + sensG * (gripe - 0.3) + sensC * (calor - 0.5);
+        return Math.Max(0.1, fator);
+    }
+
+    private double GripeBruto(string uf, DateOnly data)
+    {
+        var idx = DiaIdx(data);
+        return _gripe.TryGetValue(uf, out var arr) && idx >= 0 && idx < arr.Length ? arr[idx] : 0.3;
+    }
+
+    private double CalorIndice(string uf, DateOnly data)
+    {
+        var t = ClimaTempC(uf, data);
+        return Math.Clamp((t - 15.0) / 25.0, 0.0, 1.0);  // 15°C→0, 40°C→1
+    }
+
+    private int DiaIdx(DateOnly data) => data.DayNumber - Inicio.DayNumber;
+
+    /// <summary>
+    /// Constrói as séries diárias de gripe e clima por UF: média sazonal (fase
+    /// regional) + anomalia estocástica (surtos / ondas de calor) + ruído. A
+    /// anomalia é o que o calendário não prevê.
+    /// </summary>
+    private void BuildDrivers(IReadOnlyList<string> ufs, Random rng)
+    {
+        foreach (var uf in ufs.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var gripe = new double[DiasHorizonte];
+            var clima = new double[DiasHorizonte];
+
+            // Fase regional: UFs mais ao norte têm gripe mais fraca/deslocada e
+            // clima mais quente. Usamos um deslocamento determinístico por UF + rng.
+            var faseGripe = rng.NextDouble() * 20 - 10;       // ± 10 dias
+            var tempBase = TempBaseUf(uf) + (rng.NextDouble() * 2 - 1);
+            var ampSurtoUf = 0.3 + rng.NextDouble() * 0.3;    // intensidade máx do surto
+
+            // Surtos de gripe: 1-2 por ano, centrados perto do inverno, largura variável.
+            var surtos = new List<(double centro, double sigma, double altura)>();
+            int nSurtos = 1 + (rng.NextDouble() < 0.5 ? 1 : 0);
+            for (int k = 0; k < nSurtos; k++)
+            {
+                // Centro perto do dia-do-ano ~180 (inverno BR), ± algumas semanas.
+                var centroDoY = 180 + (rng.NextDouble() * 60 - 30) + faseGripe;
+                var sigma = 7 + rng.NextDouble() * 12;
+                var altura = ampSurtoUf * (0.6 + rng.NextDouble() * 0.6);
+                surtos.Add((centroDoY, sigma, altura));
+            }
+
+            // Ondas de calor: 1-3 por ano no verão.
+            var ondas = new List<(double centro, double sigma, double altura)>();
+            int nOndas = 1 + (int)(rng.NextDouble() * 3);
+            for (int k = 0; k < nOndas; k++)
+            {
+                var centroDoY = (rng.NextDouble() < 0.5 ? 15 : 350) + (rng.NextDouble() * 30 - 15);
+                var sigma = 5 + rng.NextDouble() * 8;
+                var altura = 3 + rng.NextDouble() * 5;        // +3..8 °C
+                ondas.Add((centroDoY, sigma, altura));
+            }
+
+            for (int i = 0; i < DiasHorizonte; i++)
+            {
+                var data = Inicio.AddDays(i);
+                var doy = data.DayOfYear;
+
+                // Gripe: base sazonal (pico inverno ~ dia 180) + surtos + ruído.
+                var sazonal = 0.3 + 0.18 * Math.Cos((doy - 180 - faseGripe) / 365.0 * 2 * Math.PI);
+                double surto = 0;
+                foreach (var (centro, sigma, altura) in surtos)
+                    surto += altura * GaussBump(doy, centro, sigma);
+                var g = sazonal + surto + (rng.NextDouble() * 0.04 - 0.02);
+                gripe[i] = Math.Clamp(g, 0.0, 1.2);
+
+                // Clima: base UF + sazonal (pico verão, oposto à gripe) + ondas + ruído.
+                var sazonalTemp = tempBase + 5.0 * Math.Cos((doy - 15) / 365.0 * 2 * Math.PI);
+                double onda = 0;
+                foreach (var (centro, sigma, altura) in ondas)
+                    onda += altura * GaussBump(doy, centro, sigma);
+                clima[i] = sazonalTemp + onda + (rng.NextDouble() * 1.5 - 0.75);
+            }
+
+            _gripe[uf] = gripe;
+            _climaTemp[uf] = clima;
+        }
+    }
+
+    /// <summary>Bump gaussiano de pico 1 em <paramref name="centro"/> (dia-do-ano, com wrap de 365).</summary>
+    private static double GaussBump(int doy, double centro, double sigma)
+    {
+        var d = Math.Abs(doy - centro);
+        d = Math.Min(d, 365 - d);   // distância circular no ano
+        return Math.Exp(-(d * d) / (2 * sigma * sigma));
+    }
+
+    private static double TempBaseUf(string uf) => uf switch
+    {
+        // Norte/Nordeste quentes; Sul ameno.
+        "AM" or "PA" or "AC" or "RO" or "RR" or "AP" or "TO" or "MA" => 30,
+        "CE" or "RN" or "PB" or "PE" or "AL" or "SE" or "BA" or "PI" => 29,
+        "MT" or "MS" or "GO" or "DF" => 27,
+        "SP" or "RJ" or "ES" or "MG" => 24,
+        "PR" or "SC" or "RS" => 20,
+        _ => 25,
+    };
 
     public bool EmPromocao(int skuIndex, DateOnly data) => FatorPromocao(skuIndex, data) > 1.0;
 
@@ -111,13 +272,14 @@ internal sealed class DemandModel
         _ => 1.0,
     };
 
-    private static double FatorAnual(DateOnly data)
+    private static double FatorAnualGenerico(DateOnly data)
     {
-        // Curva senoidal com pico no inverno BR (julho ~ dia 200) — gripe/respiratório
-        // puxam a demanda. Amplitude 15%.
+        // Sazonalidade anual GENÉRICA leve (±5%) que afeta todos os SKUs. A
+        // sazonalidade forte (gripe/calor) agora vem dos drivers regionais por
+        // subcategoria sensível — ver FatorSinais.
         var diaNoAno = data.DayOfYear;
         var phase = (diaNoAno - 200) / 365.0 * 2 * Math.PI;
-        return 1.0 + 0.15 * Math.Cos(phase);
+        return 1.0 + 0.05 * Math.Cos(phase);
     }
 
     private double FatorPromocao(int skuIndex, DateOnly data)

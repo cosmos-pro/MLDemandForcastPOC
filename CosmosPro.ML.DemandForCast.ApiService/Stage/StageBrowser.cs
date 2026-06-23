@@ -33,6 +33,8 @@ public sealed class StageBrowser(SqlConnection connection)
                 ["DataInicio", "DataFim", "Sku", "LojaId", "Tipo", "DescontoPct"], "DataInicio DESC"),
             ["iqvia"] = new("iqvia", "MercadoIqvia", "Mercado IQVIA", "public",
                 ["Mes", "PrincipioAtivo", "UF", "DemandaMercadoUnidades", "MarketShareCategoria"], "Mes DESC"),
+            ["sinais"] = new("sinais", "SinaisExternos", "Sinais externos", "thermostat",
+                ["Data", "Geografia", "Tipo", "Valor"], "Data DESC"),
         };
 
     public static bool TryGetTable(string alias, out TableInfo info) => Tables.TryGetValue(alias, out info!);

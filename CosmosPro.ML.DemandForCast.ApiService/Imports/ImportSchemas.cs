@@ -17,4 +17,14 @@ internal static class ImportSchemas
         ["promocoes.csv"] = ["DataInicio", "DataFim", "Sku"],
         ["mercado_iqvia.csv"] = ["Mes", "PrincipioAtivo", "UF", "DemandaMercadoUnidades"],
     };
+
+    /// <summary>
+    /// Arquivos OPCIONAIS: se presentes no ZIP, têm o header validado; se ausentes,
+    /// o import segue normalmente. Mantém compatibilidade com ZIPs antigos (pré-F8.x)
+    /// que não traziam sinais exógenos.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string[]> OptionalFiles = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["sinais_externos.csv"] = ["Data", "Geografia", "Tipo", "Valor"],
+    };
 }

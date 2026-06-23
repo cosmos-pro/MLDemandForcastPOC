@@ -47,6 +47,18 @@ internal static class ImportValidator
                     errors.Add($"'{expectedName}' está sem as colunas: {string.Join(", ", missingColumns)}.");
                 }
             }
+
+            // Opcionais: valida header só se o arquivo estiver presente.
+            foreach (var (optionalName, optionalColumns) in ImportSchemas.OptionalFiles)
+            {
+                if (!entriesByName.TryGetValue(optionalName, out var entry)) continue;
+
+                var missingColumns = ReadMissingColumns(entry, optionalColumns);
+                if (missingColumns.Count > 0)
+                {
+                    errors.Add($"'{optionalName}' está sem as colunas: {string.Join(", ", missingColumns)}.");
+                }
+            }
         }
 
         return new ImportValidationResult(errors.Count == 0, errors);
