@@ -1,9 +1,12 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-// --- Parameters (credenciais geradas pelo Aspire, persistidas em user-secrets) -
+// --- Parameters --------------------------------------------------------------
 
+// MinIO de debug do POC: credenciais fixas e não-secretas de propósito, para o
+// AppHost subir em qualquer máquina sem exigir user-secrets. Não reaproveitar
+// fora do ambiente local.
 var minioAccessKey = builder.AddParameter("minio-access-key", secret: false, value: "minioadmin");
-var minioSecretKey = builder.AddParameter("minio-secret-key", secret: true);
+var minioSecretKey = builder.AddParameter("minio-secret-key", secret: false, value: "minioadmin");
 
 // --- Data stores (persistentes entre F5s) ------------------------------------
 
@@ -38,8 +41,8 @@ var clickhouse = builder.AddClickHouse("clickhouse")
 var vendasOlapDb = clickhouse.AddDatabase("vendas-olap", "vendas_olap");
 
 // MinIO: object storage S3-compatible para armazenar ZIPs de import (CSVs
-// de vendas, estoque, etc.). Persistido em volume; chaves geradas como
-// ParameterResource pelo Aspire.
+// de vendas, estoque, etc.). Persistido em volume; credenciais fixas via
+// ParameterResource (ver bloco de parameters acima).
 var minio = builder.AddMinioContainer("minio", minioAccessKey, minioSecretKey)
                    .WithLifetime(ContainerLifetime.Persistent)
                    .WithDataVolume();
