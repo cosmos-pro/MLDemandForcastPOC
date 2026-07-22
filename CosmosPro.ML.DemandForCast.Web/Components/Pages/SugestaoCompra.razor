@@ -3,6 +3,7 @@
 @inject PurchasingApiClient PurchasingApi
 @inject TrainingApiClient TrainingApi
 @inject NotificationService Notifications
+@inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>Sugestão de compra</PageTitle>
@@ -240,6 +241,8 @@
                     <RadzenText TextStyle="TextStyle.H6" Style="margin: 0">Lista de compra</RadzenText>
                     <HelpTip Text="@TipLista" />
                     <div style="flex: 1"></div>
+                    <RadzenButton Text="Exportar tudo" Icon="download" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light"
+                                  Click="@(() => Exportar(so, s => PurchasingExcelExporter.BuildCompleto(s, _ledgerPolicy ?? politicas.FirstOrDefault()?.Policy), $"sugestao-compra-completo_{r.DataFim:yyyy-MM-dd}.xlsx"))" />
                 </RadzenStack>
 
                 <RadzenTabs RenderMode="TabRenderMode.Client">
@@ -252,6 +255,8 @@
                                 <div style="flex: 1"></div>
                                 <RadzenCheckBox @bind-Value="_soItensAPedir" Name="soPedir" TValue="bool" />
                                 <RadzenLabel Text="Só itens a pedir" Component="soPedir" Style="font-size: 0.85rem" />
+                                <RadzenButton Text="Exportar" Icon="download" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light"
+                                              Click="@(() => Exportar(so, PurchasingExcelExporter.BuildSugestaoHoje, $"sugestao-compra_{r.DataFim:yyyy-MM-dd}.xlsx"))" />
                             </RadzenStack>
                             @if (buyVisiveis.Count == 0)
                             {
@@ -310,6 +315,8 @@
                                                 Change="@(_ => StateHasChanged())">
                                     <Template Context="pol">@LabelPolitica((string)pol)</Template>
                                 </RadzenDropDown>
+                                <RadzenButton Text="Exportar" Icon="download" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Light"
+                                              Click="@(() => Exportar(so, s => PurchasingExcelExporter.BuildLivroPedidos(s, _ledgerPolicy ?? politicas.FirstOrDefault()?.Policy), $"livro-de-pedidos_{r.DataFim:yyyy-MM-dd}.xlsx"))" />
                             </RadzenStack>
                             @{
                                 var polSel = _ledgerPolicy ?? politicas.FirstOrDefault()?.Policy;
@@ -544,6 +551,23 @@
             });
         }
         finally { _enqueuing = false; }
+    }
+
+    private async Task Exportar(SimulationOutput so, Func<SimulationOutput, byte[]> build, string fileName)
+    {
+        try
+        {
+            var bytes = build(so);
+            await JS.InvokeVoidAsync("downloadFile", fileName,
+                Convert.ToBase64String(bytes), PurchasingExcelExporter.XlsxContentType);
+        }
+        catch (Exception ex)
+        {
+            Notifications.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error, Summary = "Falha ao exportar", Detail = ex.Message, Duration = 8000,
+            });
+        }
     }
 
     private static BadgeStyle BadgeFor(string status) => status switch

@@ -1,7 +1,7 @@
 # Exportar dados da Sugestão de compra para Excel (.xlsx)
 
 **Data:** 2026-07-22
-**Status:** Design aprovado — pendente escrita do plano de implementação
+**Status:** Implementado (TDD — exporter com testes xUnit; UI com botões + JS interop)
 
 ## Problema
 
